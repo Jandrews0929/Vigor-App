@@ -1,7 +1,7 @@
 /* Vigor trial app. Plain JavaScript, no build step. Data lives in Supabase (see supabase/schema.sql). */
 'use strict';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const CFG = window.VIGOR_CONFIG || {};
 
 /* ---------- Exercise library ---------- */
@@ -39,7 +39,7 @@ const OFFTOPIC = /\b(crypto|bitcoin|nft|forex|election|vote for|giveaway|promo c
 const S = {
   view: 'loading', authMode: 'signin', authMsg: '', session: null, me: null,
   tab: 'feed', stack: [], sheet: null, data: {}, profiles: {}, follows: [], hist: {},
-  workout: null, summary: null, rest: null, esort: 'popular', ecat: 'All', gridFilter: 'All', busy: false
+  workout: null, summary: null, rest: null, esort: 'popular', ecat: 'All', pq: '', presults: null, gridFilter: 'All', busy: false
 };
 let sb = null;
 
@@ -189,6 +189,26 @@ async function loadHist(ex) {
   if (S.hist[ex]) return;
   S.hist[ex] = await q(sb.from('sets').select('weight,reps,created_at').eq('user_id', S.me.id).eq('ex', ex).order('created_at'));
 }
+let searchSeq = 0;
+async function searchPeople(raw) {
+  const term = raw.trim().replace(/^@/, '').replace(/[^\p{L}\p{N} ._'-]/gu, '').slice(0, 40);
+  const mine = ++searchSeq;
+  if (!term) { S.presults = []; return; }
+  const like = `%${term.replace(/[%_]/g, m => '\\' + m)}%`;
+  const rows = await q(sb.from('profiles').select('*').or(`name.ilike.${JSON.stringify(like)},handle.ilike.${JSON.stringify(like)}`).neq('id', S.me.id).order('name').limit(25));
+  if (mine !== searchSeq) return; // a newer search already answered
+  rows.forEach(r => (S.profiles[r.id] = r));
+  const t = term.toLowerCase();
+  const rank = r => (String(r.handle).toLowerCase() === t ? 0 : String(r.handle).toLowerCase().startsWith(t) || r.name.toLowerCase().startsWith(t) ? 1 : 2);
+  S.presults = rows.sort((a, b) => rank(a) - rank(b)).map(r => r.id);
+}
+function paintSearch() {
+  const box = document.getElementById('psearch-results'); const body = document.getElementById('explore-body');
+  if (box) box.innerHTML = searchResultsHtml();
+  if (body) body.hidden = !!S.pq.trim();
+}
+let searchTimer;
+
 async function loadAdmin() {
   const [held, reports, feedback, code] = await Promise.all([
     q(sb.from('posts').select('*').eq('status', 'held').order('created_at', { ascending: false })),
@@ -353,14 +373,27 @@ function feedScreen() {
     : `<div class="empty"><p>Your feed shows posts from people you follow.</p><button class="btn primary" data-act="tab" data-id="explore">Find people on Explore</button></div>`);
 }
 function score(p) { const r = p.react.strong + p.react.form + p.react.inspired + p.ncomments * 3; return (r + 1) / Math.pow((Date.now() - new Date(p.created_at)) / 3600000 + 2, 0.8); }
+function peopleRow(v) {
+  const V = S.profiles[v] || {};
+  return `<div class="person"><button class="who" data-act="profile" data-id="${v}">${avatar(v)}<span><span class="nm">${esc(V.name)}</span><span class="hd">@${esc(V.handle)}${V.tags && V.tags[0] ? ' · ' + esc(V.tags[0]) : ''}</span></span></button>${followBtn(v, true)}</div>`;
+}
+function searchResultsHtml() {
+  if (!S.pq.trim()) return '';
+  if (S.presults === null) return '<div class="loading" style="padding:20px">Searching…</div>';
+  if (!S.presults.length) return `<div class="empty">No one matches "${esc(S.pq.trim())}". Check the spelling, or ask them for their username.</div>`;
+  return S.presults.map(peopleRow).join('');
+}
 function exploreScreen() {
-  const head = topBar(h2('Explore'), fbBtn());
-  if (!S.data.explore) return head + loading();
+  const head = topBar(h2('Explore'), fbBtn()) +
+    `<div class="search-wrap"><input class="field" id="psearch" type="search" placeholder="Search people by name or username" value="${esc(S.pq)}" autocomplete="off" autocapitalize="none" enterkeyhint="search" aria-label="Search people">
+      ${S.pq ? '<button class="text-btn" data-act="clearSearch">Cancel</button>' : ''}</div>
+    <div id="psearch-results">${searchResultsHtml()}</div>`;
+  if (!S.data.explore) return head + `<div id="explore-body" ${S.pq.trim() ? 'hidden' : ''}>${loading()}</div>`;
   const cat = ECATS.find(c => c[0] === S.ecat)[1];
   let list = S.data.explore.filter(p => !cat || cat.includes(p.category));
   list = S.esort === 'new' ? list : [...list].sort((a, b) => score(b) - score(a));
   const creators = S.data.creators.filter(u => !iFollow(u));
-  return head + (creators.length ? `<div class="ex-sub label" style="padding-bottom:8px">People to follow</div>
+  return head + `<div id="explore-body" ${S.pq.trim() ? 'hidden' : ''}>` + (creators.length ? `<div class="ex-sub label" style="padding-bottom:8px">People to follow</div>
     <div class="rising">${creators.map(u => { const U = S.profiles[u]; return `<div class="creator">
       <button data-act="profile" data-id="${u}" style="display:contents">${avatar(u)}<span class="nm">${esc(U.name)}</span></button>
       <span class="meta">${esc(U.tags[0] || 'Member')} · ${fmtCount(followersOf(u).length)} follower${followersOf(u).length === 1 ? '' : 's'}</span>${followBtn(u, true)}</div>`; }).join('')}</div>` : '') +
@@ -371,7 +404,7 @@ function exploreScreen() {
       return `<button class="etile" data-act="open" data-id="${p.id}" aria-label="Open post by ${esc(handle(p.user_id))}">${mediaHtml(p)}
         <span class="etile-foot">${avatar(p.user_id)}<span class="hn">${esc(handle(p.user_id))}</span></span>
         <span class="etile-rank">${S.esort === 'new' ? ago(p.created_at) : num(t) + ' reaction' + (t === 1 ? '' : 's')}</span></button>`; }).join('')}</div>`
-      : '<div class="empty">No posts here yet. Be the first: log a workout or tap + on your feed.</div>'}`;
+      : '<div class="empty">No posts here yet. Be the first: log a workout or tap + on your feed.</div>'}</div>`;
 }
 function historyChart(hist) {
   const h = hist.points; if (h.length < 2) return '';
@@ -448,7 +481,7 @@ function peopleScreen(u, which) {
   return topBar(h2(handle(u)), '', true) +
     `<div style="padding:12px 16px"><div class="seg">${[['followers', followersOf(u).length + ' followers'], ['following', followsOf(u).length + ' following']].map(([k, l]) =>
       `<button data-act="people" data-id="${u}:${k}" data-swap="1" aria-pressed="${which === k}">${l}</button>`).join('')}</div></div>
-    ${list.map(v => { const V = S.profiles[v] || {}; return `<div class="person"><button class="who" data-act="profile" data-id="${v}">${avatar(v)}<span><span class="nm">${esc(V.name)}</span><span class="hd">@${esc(V.handle)}${V.tags && V.tags[0] ? ' · ' + esc(V.tags[0]) : ''}</span></span></button>${followBtn(v, true)}</div>`; }).join('')}
+    ${list.map(peopleRow).join('')}
     ${!list.length ? `<div class="empty">${which === 'followers' ? 'No followers yet.' : 'Not following anyone yet.'}</div>` : ''}`;
 }
 function editProfileScreen() {
@@ -763,6 +796,7 @@ const A = {
   },
   gridf(id) { S.gridFilter = id; render(true); },
   esort(id) { S.esort = id; render(true); },
+  clearSearch() { S.pq = ''; S.presults = null; render(true); },
   ecat(id) { S.ecat = id; render(true); },
   noproof(ex) { S.sheet = { type: 'noproof', ex }; render(true); },
   feedback() { S.sheet = { type: 'feedback' }; render(true); setTimeout(() => $('#fbtext') && $('#fbtext').focus(), 60); },
@@ -982,6 +1016,12 @@ document.addEventListener('input', ev => {
     const box = document.getElementById(`prl-${t.dataset.ex}-${t.dataset.set}`); if (box) box.innerHTML = prLive(e.id, s);
     saveWorkout();
   } else if (t.id === 'wtitle' && S.workout) { S.workout.title = t.value; saveWorkout(); }
+  else if (t.id === 'psearch') {
+    S.pq = t.value; S.presults = null; clearTimeout(searchTimer);
+    if (!S.pq.trim()) { paintSearch(); return; }
+    paintSearch();
+    searchTimer = setTimeout(() => searchPeople(S.pq).then(paintSearch).catch(fail), 250);
+  }
   else if (t.id === 'exq') { const v = t.value.toLowerCase(); document.querySelectorAll('#exlist button').forEach(b => (b.hidden = !b.dataset.n.includes(v))); }
   else if (t.id === 'ccap' && S.sheet) { S.sheet.caption = t.value; const w = $('#cwarn'); if (w) w.hidden = !OFFTOPIC.test(t.value); }
 });
