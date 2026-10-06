@@ -1,28 +1,95 @@
 /* Vigor trial app. Plain JavaScript, no build step. Data lives in Supabase (see supabase/schema.sql). */
 'use strict';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const CFG = window.VIGOR_CONFIG || {};
 
-/* ---------- Exercise library ---------- */
-const EX = {
-  squat: ['Back squat', 'red'], front: ['Front squat', 'red'], goblet: ['Goblet squat', 'red'], legpress: ['Leg press', 'red'],
-  splitsq: ['Bulgarian split squat', 'red'], lunge: ['Walking lunge', 'red'], hacksq: ['Hack squat', 'red'], legext: ['Leg extension', 'red'],
-  bench: ['Bench press', 'blue'], incline: ['Incline bench press', 'blue'], dbbench: ['Dumbbell bench press', 'blue'], inclinedb: ['Incline DB press', 'blue'],
-  cgbench: ['Close-grip bench', 'blue'], dip: ['Weighted dip', 'green', 1], pushup: ['Push-up', 'blue'], flyes: ['Cable fly', 'blue'],
-  dead: ['Deadlift', 'yellow'], sumo: ['Sumo deadlift', 'yellow'], rdl: ['Romanian deadlift', 'yellow'], trapbar: ['Trap bar deadlift', 'yellow'],
-  hipthrust: ['Hip thrust', 'yellow'], legcurl: ['Lying leg curl', 'yellow'], goodmorning: ['Good morning', 'yellow'], kbswing: ['Kettlebell swing', 'yellow'],
-  ohp: ['Overhead press', 'green'], pushpress: ['Push press', 'green'], dbpress: ['Seated DB press', 'green'], latraise: ['Lateral raise', 'green'],
-  facepull: ['Cable face pull', 'green'], curl: ['Barbell curl', 'green'], dbcurl: ['Dumbbell curl', 'green'], hammer: ['Hammer curl', 'green'],
-  triext: ['Triceps pushdown', 'green'], skull: ['Skull crusher', 'green'],
-  pullup: ['Weighted pull-up', 'blue', 1], chinup: ['Weighted chin-up', 'blue', 1], latpd: ['Lat pulldown', 'blue'], row: ['Barbell row', 'green'],
-  dbrow: ['Dumbbell row', 'green'], tbar: ['T-bar row', 'green'], cablerow: ['Seated cable row', 'green'], pendlay: ['Pendlay row', 'green'],
-  shrug: ['Shrug', 'yellow'], calf: ['Standing calf raise', 'red'], abwheel: ['Ab wheel rollout', 'yellow'], hanging: ['Hanging leg raise', 'yellow'],
-  clean: ['Power clean', 'yellow'], snatch: ['Power snatch', 'yellow'], farmer: ['Farmer carry', 'yellow'], sled: ['Sled push', 'red']
-};
-const exName = k => (EX[k] ? EX[k][0] : k);
-const exColor = k => (EX[k] ? EX[k][1] : 'blue');
-const exAdded = k => !!(EX[k] && EX[k][2]);
+/* ---------- Exercise library ----------
+   Built-ins are defined here. Member-created exercises load from the exercises table at sign-in (loadExercises).
+   Each entry: name, plate color, muscle group, search aliases, and whether weight is added to bodyweight (+ before the name). */
+const EX = {};
+const EXGROUPS = ['Legs', 'Push', 'Pull', 'Hinge', 'Shoulders', 'Arms', 'Core', 'Cardio', 'Mobility', 'Other'];
+const GROUP_COLOR = { Legs: 'red', Push: 'blue', Pull: 'green', Hinge: 'yellow', Shoulders: 'blue', Arms: 'green', Core: 'yellow', Cardio: 'red', Mobility: 'green', Other: 'blue' };
+function defEx(grp, list) {
+  list.split('|').forEach(item => {
+    const [key, name, alias = ''] = item.split(':');
+    EX[key] = { name: name.replace(/^\+/, ''), color: GROUP_COLOR[grp], grp, alias, added: name[0] === '+', status: 'approved' };
+  });
+}
+defEx('Legs', 'squat:Back squat:bb barbell quads|front:Front squat:barbell quads|goblet:Goblet squat:db kb|legpress:Leg press:machine quads|' +
+  'splitsq:Bulgarian split squat:bss rfess db|lunge:Walking lunge:lunges db|hacksq:Hack squat:machine|legext:Leg extension:quads machine|' +
+  'calf:Standing calf raise:calves|seatcalf:Seated calf raise:calves|sled:Sled push:prowler|smithsq:Smith machine squat|boxsq:Box squat:barbell|' +
+  'stepup:Step-up:box db|adduct:Hip adduction:adductor machine inner thigh|abduct:Hip abduction:abductor machine outer thigh glutes');
+defEx('Push', 'bench:Bench press:bp flat barbell chest|incline:Incline bench press:barbell chest|dbbench:Dumbbell bench press:db flat chest|' +
+  'inclinedb:Incline DB press:dumbbell bench chest|cgbench:Close-grip bench:cgbp triceps press|dip:+Weighted dip:dips triceps chest|' +
+  'pushup:Push-up:press up pushups chest|flyes:Cable fly:flye flies crossover chest|decline:Decline bench press:chest|' +
+  'machinechest:Machine chest press|pecdeck:Pec deck:fly machine chest|dbfly:Dumbbell fly:flye flies db chest');
+defEx('Pull', 'pullup:+Weighted pull-up:pullups chin up back lats|chinup:+Weighted chin-up:chinups back|latpd:Lat pulldown:lats cable back|' +
+  'row:Barbell row:bent over bb back|dbrow:Dumbbell row:db one arm back|tbar:T-bar row:back|cablerow:Seated cable row:back|pendlay:Pendlay row:barbell back|' +
+  'shrug:Shrug:traps|chestrow:Chest-supported row:incline row back|machinerow:Machine row:back|straightarm:Straight-arm pulldown:lats pullover cable|' +
+  'invrow:Inverted row:bodyweight back');
+defEx('Hinge', 'dead:Deadlift:conventional dl|sumo:Sumo deadlift:dl|rdl:Romanian deadlift:rdl dl stiff leg sldl hamstrings|trapbar:Trap bar deadlift:hex bar dl|' +
+  'hipthrust:Hip thrust:glute bridge glutes|legcurl:Lying leg curl:hamstrings machine|seatlegcurl:Seated leg curl:hamstrings machine|goodmorning:Good morning|' +
+  'kbswing:Kettlebell swing:kb|clean:Power clean:olympic|snatch:Power snatch:olympic|backext:Back extension:hyperextension hyper|pullthru:Cable pull-through:glutes');
+defEx('Shoulders', 'ohp:Overhead press:ohp military standing barbell|pushpress:Push press|dbpress:Seated DB press:dumbbell shoulder press|' +
+  'latraise:Lateral raise:side delts db dumbbell|facepull:Cable face pull:rear delts|arnold:Arnold press:dumbbell|reardelt:Rear delt fly:reverse fly delts|' +
+  'uprow:Upright row|cablelat:Cable lateral raise:side delts|frontraise:Front raise:delts|machinesp:Machine shoulder press');
+defEx('Arms', 'curl:Barbell curl:biceps bb|dbcurl:Dumbbell curl:biceps db|hammer:Hammer curl:biceps|triext:Triceps pushdown:tricep cable rope|' +
+  'skull:Skull crusher:lying triceps extension ez|preacher:Preacher curl:biceps ez|cablecurl:Cable curl:biceps|ohtri:Overhead triceps extension:tricep cable db|' +
+  'inclinecurl:Incline dumbbell curl:biceps db|ezcurl:EZ-bar curl:biceps');
+defEx('Core', 'abwheel:Ab wheel rollout:abs|hanging:Hanging leg raise:abs|farmer:Farmer carry:farmers walk grip|cablecrunch:Cable crunch:abs|' +
+  'russian:Russian twist:obliques abs|pallof:Pallof press:anti rotation');
+const exName = k => (EX[k] ? EX[k].name : k);
+const exColor = k => (EX[k] ? EX[k].color : 'blue');
+const exAdded = k => !!(EX[k] && EX[k].added);
+function addCustomEx(r) {
+  EX[r.id] = { name: r.name, color: GROUP_COLOR[r.grp] || 'blue', grp: r.grp, alias: '', added: !!r.added, status: r.status, by: r.created_by, custom: true, created_at: r.created_at };
+}
+// Exercise search: every typed word must start a word of the name, an alias or the muscle group,
+// so "db row", "pull up", "rdl" and "legs" all find what you'd expect. Spaces and hyphens are optional ("pullup").
+const SYN = { db: 'dumbbell', dumbbell: 'db', bb: 'barbell', barbell: 'bb', kb: 'kettlebell', kettlebell: 'kb' };
+const norm = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+const exKey = t => norm(t).replace(/ /g, '');
+function exIndex(k) {
+  const e = EX[k];
+  if (!e.words) {
+    e.nameWords = norm(e.name).split(' ');
+    e.words = norm(e.name + ' ' + e.alias + ' ' + e.grp).split(' ');
+    e.words.slice().forEach(w => SYN[w] && e.words.push(SYN[w]));
+    e.key = exKey(e.name);
+  }
+  return e;
+}
+// What the picker offers: the shared list, plus exercises this person made that are still waiting for review.
+function pickable() {
+  const mine = store.get('vigor.myEx', []);
+  return Object.keys(EX).filter(k => EX[k].status === 'approved' || (EX[k].status === 'pending' && S.me && (EX[k].by === S.me.id || mine.includes(k))));
+}
+function searchEx(text) {
+  const qn = norm(text); const keys = pickable();
+  if (!qn) return keys.sort((a, b) => exName(a).localeCompare(exName(b)));
+  const toks = qn.split(' '); const compact = qn.replace(/ /g, '');
+  const hits = [];
+  keys.forEach(k => {
+    const e = exIndex(k); const n = e.nameWords.join(' ');
+    let rank;
+    if (e.key === compact) rank = 0;
+    else if (n.startsWith(qn) || e.key.startsWith(compact)) rank = 1;
+    else if (toks.every(t => e.words.some(w => w.startsWith(t)))) rank = toks.every(t => e.nameWords.some(w => w.startsWith(t))) ? 2 : 3;
+    else if (compact.length >= 3 && e.key.includes(compact)) rank = 3;
+    else return;
+    hits.push([rank, k]);
+  });
+  return hits.sort((a, b) => a[0] - b[0] || exName(a[1]).localeCompare(exName(b[1]))).map(h => h[1]);
+}
+// Same screen the database runs (add_exercise in schema.sql), so people get an answer before anything is sent.
+const EX_BLOCK = /(https?:\/\/|www\.|\.com\b|@|\b(crypto|bitcoin|nft|casino|betting|giveaway|buy|sale|discount|promo\w*|coupon|subscribe|onlyfans|porn\w*|sex\w*|nude\w*|fuck\w*|shit\w*|bitch\w*|dick\w*)\b)/i;
+function screenExName(n) {
+  if (n.length < 3 || n.length > 40) return 'Exercise names need 3 to 40 characters.';
+  if ((n.match(/\p{L}/gu) || []).length < 3) return 'Use the exercise\'s name, for example "Cable lateral raise".';
+  if (EX_BLOCK.test(n)) return 'That doesn\'t look like an exercise. Names can\'t include links, ads or offensive words.';
+  return '';
+}
 const TEMPLATES = [
   { name: 'Lower A', ex: ['squat', 'rdl', 'lunge'] },
   { name: 'Push A', ex: ['bench', 'ohp', 'inclinedb', 'triext'] },
@@ -39,7 +106,8 @@ const OFFTOPIC = /\b(crypto|bitcoin|nft|forex|election|vote for|giveaway|promo c
 const S = {
   view: 'loading', authMode: 'signin', authMsg: '', session: null, me: null,
   tab: 'feed', stack: [], sheet: null, data: {}, profiles: {}, follows: [], hist: {},
-  workout: null, summary: null, rest: null, esort: 'popular', ecat: 'All', pq: '', presults: null, gridFilter: 'All', busy: false
+  workout: null, summary: null, rest: null, esort: 'popular', ecat: 'All', pq: '', presults: null, gridFilter: 'All', busy: false,
+  legacy: false // true until the database has run the v2 schema (likes, set types, custom exercises)
 };
 let sb = null;
 
@@ -65,6 +133,9 @@ function ago(ts) {
 const shortDate = ts => new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 async function q(p) { const { data, error } = await p; if (error) throw error; return data; }
 const mediaUrl = path => sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+// Warm-up sets are logged but never count toward PRs, history or volume.
+const noWarm = qb => (S.legacy ? qb : qb.neq('kind', 'warmup'));
+const setCols = () => 'workout_id,ex,weight,reps,is_pr,pr_types,idx' + (S.legacy ? '' : ',kind');
 function fmtCount(n) { return n >= 10000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : num(n); }
 
 const ICON = {
@@ -78,7 +149,8 @@ const ICON = {
   play: '<svg viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>',
   trophy: '<svg viewBox="0 0 24 24"><path d="M7 3h10v2h3v3a4 4 0 0 1-4 4h-.3A5 5 0 0 1 13 14.9V18h3v3H8v-3h3v-3.1A5 5 0 0 1 8.3 12H8a4 4 0 0 1-4-4V5h3zm0 4H6v1a2 2 0 0 0 1 1.7zm10 0v2.7A2 2 0 0 0 18 8V7z"/></svg>',
-  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>'
+  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>',
+  heart: '<svg viewBox="0 0 24 24" stroke-linejoin="round"><path d="M12 20.5s-7.6-4.5-9.3-9.6C1.6 7.4 3.8 4.5 7 4.5c2.1 0 3.7 1.2 5 3 1.3-1.8 2.9-3 5-3 3.2 0 5.4 2.9 4.3 6.4-1.7 5.1-9.3 9.6-9.3 9.6z"/></svg>'
 };
 function hueOf(id) { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 function avatar(id, cls = '') {
@@ -91,7 +163,7 @@ const handle = id => (S.profiles[id] ? '@' + S.profiles[id].handle : '@someone')
 let toastT;
 function toast(msg) {
   $('#toast').innerHTML = `<div class="toast" role="status">${esc(msg)}</div>`;
-  clearTimeout(toastT); toastT = setTimeout(() => ($('#toast').innerHTML = ''), 3200);
+  clearTimeout(toastT); toastT = setTimeout(() => ($('#toast').innerHTML = ''), Math.max(3200, msg.length * 55));
 }
 function fail(e) { console.error(e); toast(e && e.message ? e.message : 'Something went wrong. Check your connection and try again.'); }
 
@@ -114,17 +186,21 @@ async function hydratePosts(posts) {
   const [reacts, comments, sets] = await Promise.all([
     q(sb.from('reactions').select('post_id,user_id,kind').in('post_id', ids)),
     q(sb.from('comments').select('post_id').in('post_id', ids)),
-    wids.length ? q(sb.from('sets').select('workout_id,ex,weight,reps,is_pr,pr_types,idx').in('workout_id', wids).order('idx')) : Promise.resolve([])
+    wids.length ? q(sb.from('sets').select(setCols()).in('workout_id', wids).order('idx')) : Promise.resolve([])
   ]);
   const titles = wids.length ? await q(sb.from('workouts').select('id,title').in('id', wids)) : [];
-  await ensureProfiles(posts.map(p => p.user_id));
   posts.forEach(p => {
-    p.react = { strong: 0, form: 0, inspired: 0 }; p.mine = {};
-    reacts.filter(r => r.post_id === p.id).forEach(r => { p.react[r.kind]++; if (r.user_id === S.me.id) p.mine[r.kind] = true; });
+    p.react = { strong: 0, form: 0, inspired: 0, like: 0 }; p.mine = {}; p.likers = [];
+    reacts.filter(r => r.post_id === p.id).forEach(r => {
+      if (!(r.kind in p.react)) return;
+      p.react[r.kind]++; if (r.user_id === S.me.id) p.mine[r.kind] = true;
+      if (r.kind === 'like') p.likers.push(r.user_id);
+    });
     p.ncomments = comments.filter(c => c.post_id === p.id).length;
     p.sets = sets.filter(s => s.workout_id === p.workout_id);
     const t = titles.find(w => w.id === p.workout_id); p.wtitle = t ? t.title : 'Workout';
   });
+  await ensureProfiles([...posts.map(p => p.user_id), ...posts.map(likerShown)]);
   return posts;
 }
 const visibleSelect = () => sb.from('posts').select('*').neq('status', 'removed');
@@ -152,7 +228,7 @@ async function loadProfile(uid) {
     q(visibleSelect().eq('user_id', uid).order('created_at', { ascending: false }).limit(90)),
     q(sb.from('sets').select('ex,weight,reps,workout_id,created_at').eq('user_id', uid).eq('is_pr', true).order('weight', { ascending: false })),
     q(sb.from('workouts').select('id,started_at').eq('user_id', uid).gte('started_at', new Date(Date.now() - 120 * 86400000).toISOString())),
-    q(sb.from('sets').select('weight,reps').eq('user_id', uid).gte('created_at', monthStart.toISOString()))
+    q(noWarm(sb.from('sets').select('weight,reps').eq('user_id', uid).gte('created_at', monthStart.toISOString())))
   ]);
   const best = {};
   prs.forEach(s => { if (!best[s.ex] || +s.weight > +best[s.ex].weight) best[s.ex] = s; });
@@ -178,7 +254,7 @@ async function loadPost(id) {
   await ensureProfiles(p.comments.map(c => c.user_id));
   const pr = p.sets.find(s => s.is_pr);
   if (pr) {
-    const hist = await q(sb.from('sets').select('weight,workout_id,created_at').eq('user_id', p.user_id).eq('ex', pr.ex).order('created_at'));
+    const hist = await q(noWarm(sb.from('sets').select('weight,workout_id,created_at').eq('user_id', p.user_id).eq('ex', pr.ex)).order('created_at'));
     const byW = new Map();
     hist.forEach(h => { const b = byW.get(h.workout_id); if (!b || +h.weight > +b.w) byW.set(h.workout_id, { w: +h.weight, d: h.created_at, wid: h.workout_id }); });
     p.history = { ex: pr.ex, points: [...byW.values()].slice(-10) };
@@ -187,7 +263,7 @@ async function loadPost(id) {
 }
 async function loadHist(ex) {
   if (S.hist[ex]) return;
-  S.hist[ex] = await q(sb.from('sets').select('weight,reps,created_at').eq('user_id', S.me.id).eq('ex', ex).order('created_at'));
+  S.hist[ex] = await q(noWarm(sb.from('sets').select('weight,reps,created_at').eq('user_id', S.me.id).eq('ex', ex)).order('created_at'));
 }
 let searchSeq = 0;
 async function searchPeople(raw) {
@@ -209,18 +285,30 @@ function paintSearch() {
 }
 let searchTimer;
 
+// Checks which version of schema.sql the database has, then loads member-created exercises.
+async function checkSchema() {
+  try { S.legacy = !((await q(sb.rpc('vigor_schema_version'))) >= 2); } catch (_) { S.legacy = true; }
+  if (!S.legacy) { try { await loadExercises(); } catch (e) { console.error(e); } }
+}
+async function loadExercises() {
+  const rows = await q(sb.from('exercises').select('*').order('created_at').limit(5000));
+  rows.forEach(addCustomEx);
+}
 async function loadAdmin() {
-  const [held, reports, feedback, code] = await Promise.all([
+  const exq = S.legacy ? Promise.resolve([]) : q(sb.from('exercises').select('*').neq('status', 'rejected').order('created_at', { ascending: false }).limit(100));
+  const [held, reports, feedback, code, exercises] = await Promise.all([
     q(sb.from('posts').select('*').eq('status', 'held').order('created_at', { ascending: false })),
     q(sb.from('reports').select('*').eq('resolved', false).order('created_at', { ascending: false })),
     q(sb.from('feedback').select('*').order('created_at', { ascending: false }).limit(200)),
-    q(sb.rpc('get_invite_code'))
+    q(sb.rpc('get_invite_code')),
+    exq
   ]);
+  exercises.forEach(addCustomEx);
   const rp = reports.length ? await q(sb.from('posts').select('*').in('id', reports.map(r => r.post_id))) : [];
   const members = await q(sb.from('profiles').select('*').order('created_at'));
   members.forEach(m => (S.profiles[m.id] = m));
-  await ensureProfiles([...held, ...rp, ...reports, ...feedback].map(x => x.user_id));
-  S.data.admin = { held, reports, reportPosts: rp, feedback, code, members };
+  await ensureProfiles([...held, ...rp, ...reports, ...feedback].map(x => x.user_id).concat(exercises.map(x => x.created_by)));
+  S.data.admin = { held, reports, reportPosts: rp, feedback, code, members, exercises };
 }
 
 /* ---------- PR detection ---------- */
@@ -236,9 +324,10 @@ function detect(ex, w, r) {
   return out;
 }
 function computePRs() {
-  const groups = []; let sets = 0, vol = 0;
+  const groups = []; let sets = 0, vol = 0, warm = 0;
   S.workout.ex.forEach(e => {
-    const done = e.sets.filter(s => s.done && +s.w >= 0 && +s.r > 0);
+    warm += e.sets.filter(s => s.done && +s.r > 0 && s.kind === 'warmup').length;
+    const done = e.sets.filter(s => s.done && +s.w >= 0 && +s.r > 0 && s.kind !== 'warmup');
     sets += done.length; done.forEach(s => (vol += +s.w * +s.r));
     const h = S.hist[e.id] || [];
     if (!done.length) return;
@@ -252,36 +341,52 @@ function computePRs() {
     done.forEach(s => { const atW = h.filter(x => +x.weight >= +s.w); if (atW.length && +s.r > Math.max(...atW.map(x => x.reps))) add(s, 'Most reps at ' + wt(e.id, s.w)); });
     found.forEach((types, s) => groups.push({ ex: e.id, w: +s.w, r: +s.r, types, set: s }));
   });
-  return { groups, sets, vol };
+  return { groups, sets, vol, warm };
 }
 
 /* ---------- Rendering: shared pieces ---------- */
 function mediaHtml(p, full) {
+  // On a post's own page, double-tapping the photo likes it (videos keep their player controls).
+  const dbl = full && !S.legacy && p.media_kind !== 'video' ? ` data-dbl="1" data-id="${p.id}"` : '';
   if (p.media_path) {
     const url = esc(mediaUrl(p.media_path));
-    return `<div class="media">${p.media_kind === 'video'
+    return `<div class="media"${dbl}>${p.media_kind === 'video'
       ? `<video src="${url}#t=0.1" playsinline preload="metadata" ${full ? 'controls' : 'muted'}></video>${full ? '' : `<span class="play">${ICON.play}</span>`}`
       : `<img src="${url}" alt="" loading="lazy">`}</div>`;
   }
   const h = hueOf(p.id); const pr = (p.sets || []).find(s => s.is_pr);
   const big = pr ? wt(pr.ex, pr.weight) : (p.category === 'Workout' ? (p.wtitle || 'WORKOUT') : p.category);
   const sub = pr ? `${exName(pr.ex)} · ${pr.reps} rep${pr.reps > 1 ? 's' : ''}` : (p.category === 'Workout' ? `${(p.sets || []).length} sets` : 'Text post');
-  return `<div class="media"><div class="art" style="background:linear-gradient(160deg,hsl(${h} 45% 20%),hsl(${(h + 25) % 360} 55% 34%))">
+  return `<div class="media"${dbl}><div class="art" style="background:linear-gradient(160deg,hsl(${h} 45% 20%),hsl(${(h + 25) % 360} 55% 34%))">
     <span class="big">${esc(String(big).toUpperCase())}</span><span class="small">${esc(sub.toUpperCase())}</span></div></div>`;
 }
-function workoutSummary(p) {
+const KIND_TAG = { warmup: 'W', drop: 'D' };
+function workoutSummary(p, full) {
   if (!p.sets || !p.sets.length) return '';
   const byEx = [];
   p.sets.forEach(s => { let g = byEx.find(x => x.ex === s.ex); if (!g) byEx.push(g = { ex: s.ex, sets: [] }); g.sets.push(s); });
   return `<div class="wk"><h4>${esc(p.wtitle)}<span>${byEx.length} exercise${byEx.length > 1 ? 's' : ''}</span></h4><ul>${byEx.map(g => {
-    const top = g.sets.reduce((a, s) => (+s.weight > +a.weight ? s : a), g.sets[0]);
-    return `<li><b>${esc(exName(g.ex))}</b><span>${wt(g.ex, top.weight)} × ${top.reps} · ${g.sets.length} set${g.sets.length > 1 ? 's' : ''}</span></li>`;
+    const work = g.sets.filter(s => s.kind !== 'warmup'); const nw = g.sets.length - work.length;
+    const top = (work.length ? work : g.sets).reduce((a, s) => (+s.weight > +a.weight ? s : a), (work.length ? work : g.sets)[0]);
+    const count = `${work.length} set${work.length === 1 ? '' : 's'}${nw ? ` + ${nw} warm-up` : ''}`;
+    return `<li><b>${esc(exName(g.ex))}</b><span>${wt(g.ex, top.weight)} × ${top.reps} · ${count}</span></li>` +
+      (full ? `<li class="setline">${g.sets.map(s => `<span class="${s.kind || ''}">${KIND_TAG[s.kind] ? `<i>${KIND_TAG[s.kind]}</i>` : ''}${wt(g.ex, s.weight)}×${s.reps}</span>`).join('')}</li>` : '');
   }).join('')}</ul></div>`;
+}
+// The liker named under a post: someone you follow first, then anyone else, then you.
+function likerShown(p) {
+  return p.likers.find(u => u !== S.me.id && iFollow(u)) || p.likers.find(u => u !== S.me.id) || p.likers[0];
+}
+function likedBy(p) {
+  const n = p.react.like; if (!n) return '';
+  const u = likerShown(p); const who = u === S.me.id ? 'you' : esc(handle(u));
+  return `<button class="likes" data-act="likers" data-id="${p.id}">Liked by <b>${who}</b>${n > 1 ? ` and <b>${n - 1} other${n > 2 ? 's' : ''}</b>` : ''}</button>`;
 }
 function postCard(p, full) {
   const U = S.profiles[p.user_id] || {};
   const prs = (p.sets || []).filter(s => s.is_pr);
-  const media = (p.media_path || p.sets.length || !full) ? (full ? mediaHtml(p, true) : `<button class="media-btn" data-act="open" data-id="${p.id}" aria-label="Open post">${mediaHtml(p)}</button>`) : '';
+  const media = (p.media_path || p.sets.length || !full) ? (full ? mediaHtml(p, true)
+    : `<button class="media-btn" data-act="open" data-id="${p.id}" ${S.legacy ? '' : 'data-dbl="1"'} aria-label="Open post. Double-tap to like.">${mediaHtml(p)}</button>`) : '';
   return `<article class="post">
     <div class="post-head">
       <button class="who" data-act="profile" data-id="${p.user_id}">${avatar(p.user_id)}<span><span class="nm">${esc(U.name)}</span><span class="hd">@${esc(U.handle)}</span></span></button>
@@ -291,13 +396,15 @@ function postCard(p, full) {
     ${p.status === 'held' ? '<div class="hint" style="margin-top:0">Held for review. Only you and the moderators can see this post.</div>' : ''}
     ${media}
     ${prs.length ? `<div class="prs">${prs.map(s => `<span class="pr-badge">${ICON.trophy}${esc(exName(s.ex))} · ${wt(s.ex, s.weight)} × ${s.reps} · ${esc((s.pr_types || [])[0] || 'PR')}</span>`).join('')}</div>` : ''}
-    ${workoutSummary(p)}
-    ${p.caption ? `<p class="caption"><b>@${esc(U.handle)}</b> ${esc(p.caption)}</p>` : ''}
     <div class="react-row">
+      ${S.legacy ? '' : `<button class="like-btn" data-act="like" data-id="${p.id}" aria-pressed="${!!p.mine.like}" aria-label="${p.mine.like ? 'Unlike' : 'Like'}">${ICON.heart}<span class="n">${p.react.like ? fmtCount(p.react.like) : ''}</span></button>`}
       ${REACTS.map(([k, l]) => `<button class="react" data-act="react" data-id="${p.id}" data-k="${k}" aria-pressed="${!!p.mine[k]}">${l}<span class="n">${p.react[k]}</span></button>`).join('')}
       ${full ? '' : `<button class="react ghost" data-act="open" data-id="${p.id}">${p.ncomments} comment${p.ncomments === 1 ? '' : 's'}</button>`}
       ${p.sets.length && p.user_id !== S.me.id ? `<button class="react ghost" data-act="copy" data-id="${p.id}">Copy workout</button>` : ''}
     </div>
+    ${likedBy(p)}
+    ${workoutSummary(p, full)}
+    ${p.caption ? `<p class="caption"><b>@${esc(U.handle)}</b> ${esc(p.caption)}</p>` : ''}
     <div class="when">${ago(p.created_at)}</div>
   </article>`;
 }
@@ -365,14 +472,18 @@ function installNotice() {
     <span>${ios ? 'In Safari, tap the Share button, then "Add to Home Screen". Vigor then opens full screen like any other app.' : (deferredInstall ? 'Install Vigor so it opens full screen like any other app.' : 'Open your browser menu and choose "Install app" or "Add to Home screen".')}</span>
     <div class="row">${!ios && deferredInstall ? '<button class="btn primary sm" data-act="install">Install</button>' : ''}<button class="btn sm" data-act="dismissInstall">Not now</button></div></div>`;
 }
+function schemaNotice() {
+  if (!S.legacy || !S.me.is_admin) return '';
+  return `<div class="notice warnbox"><b>Database update needed</b><span>This version of Vigor needs the latest supabase/schema.sql. Open Supabase, go to SQL Editor, paste the whole file and press Run. Until then likes, warm-up and drop sets, and new exercises are turned off.</span></div>`;
+}
 function feedScreen() {
   const list = S.data.feed;
   const head = topBar(`<span class="wordmark">VIGOR</span><span class="sub">Following</span>`, `${fbBtn()}<button class="icon-btn" data-act="compose" aria-label="New post">${ICON.plus}</button>`);
   if (!list) return head + loading();
-  return head + installNotice() + (list.length ? list.map(p => postCard(p)).join('') + `<div class="caught"><span class="ring">${ICON.check.replace('<svg', '<svg width="20" height="20"')}</span><strong>You're caught up</strong><span>That's everything from people you follow.</span></div>`
+  return head + schemaNotice() + installNotice() + (list.length ? list.map(p => postCard(p)).join('') + `<div class="caught"><span class="ring">${ICON.check.replace('<svg', '<svg width="20" height="20"')}</span><strong>You're caught up</strong><span>That's everything from people you follow.</span></div>`
     : `<div class="empty"><p>Your feed shows posts from people you follow.</p><button class="btn primary" data-act="tab" data-id="explore">Find people on Explore</button></div>`);
 }
-function score(p) { const r = p.react.strong + p.react.form + p.react.inspired + p.ncomments * 3; return (r + 1) / Math.pow((Date.now() - new Date(p.created_at)) / 3600000 + 2, 0.8); }
+function score(p) { const r = p.react.like + p.react.strong + p.react.form + p.react.inspired + p.ncomments * 3; return (r + 1) / Math.pow((Date.now() - new Date(p.created_at)) / 3600000 + 2, 0.8); }
 function peopleRow(v) {
   const V = S.profiles[v] || {};
   return `<div class="person"><button class="who" data-act="profile" data-id="${v}">${avatar(v)}<span><span class="nm">${esc(V.name)}</span><span class="hd">@${esc(V.handle)}${V.tags && V.tags[0] ? ' · ' + esc(V.tags[0]) : ''}</span></span></button>${followBtn(v, true)}</div>`;
@@ -400,10 +511,10 @@ function exploreScreen() {
     `<div style="padding:0 16px"><div class="seg">${[['popular', 'Popular'], ['new', 'New']].map(([k, l]) => `<button data-act="esort" data-id="${k}" aria-pressed="${S.esort === k}">${l}</button>`).join('')}</div></div>
     <div class="chips" style="padding-bottom:0">${ECATS.map(([l]) => `<button class="chip" data-act="ecat" data-id="${l}" aria-pressed="${S.ecat === l}">${l}</button>`).join('')}</div>
     <p class="ex-sub">${S.esort === 'new' ? 'Newest posts from everyone, including people you don\'t follow yet.' : 'Ranked by reactions and comments, favoring recent posts.'}</p>
-    ${list.length ? `<div class="egrid">${list.map(p => { const t = p.react.strong + p.react.form + p.react.inspired;
+    ${list.length ? `<div class="egrid">${list.map(p => { const t = p.react.strong + p.react.form + p.react.inspired; const lk = p.react.like;
       return `<button class="etile" data-act="open" data-id="${p.id}" aria-label="Open post by ${esc(handle(p.user_id))}">${mediaHtml(p)}
         <span class="etile-foot">${avatar(p.user_id)}<span class="hn">${esc(handle(p.user_id))}</span></span>
-        <span class="etile-rank">${S.esort === 'new' ? ago(p.created_at) : num(t) + ' reaction' + (t === 1 ? '' : 's')}</span></button>`; }).join('')}</div>`
+        <span class="etile-rank">${S.esort === 'new' ? ago(p.created_at) : S.legacy ? `${num(t)} reaction${t === 1 ? '' : 's'}` : `♥ ${num(lk)}${t ? ` · ${num(t)} reaction${t === 1 ? '' : 's'}` : ''}`}</span></button>`; }).join('')}</div>`
       : '<div class="empty">No posts here yet. Be the first: log a workout or tap + on your feed.</div>'}</div>`;
 }
 function historyChart(hist) {
@@ -492,7 +603,7 @@ function editProfileScreen() {
     <div class="stack" style="gap:6px"><span class="label">Focus</span><div class="tagpick">${FOCUS.map(t => `<button type="button" class="chip" data-act="epTag" data-id="${t}" aria-pressed="${(S.epTags || U.tags).includes(t)}">${t}</button>`).join('')}</div></div>
     <span class="label">Goal (shows as a progress bar)</span>
     <label>Goal name<input class="field" id="ep-goal" maxlength="60" placeholder="Bench 300 by Dec 31" value="${esc(U.goal_label)}"></label>
-    <label>Lift<select class="field" id="ep-goalex"><option value="">None</option>${Object.keys(EX).map(k => `<option value="${k}" ${U.goal_ex === k ? 'selected' : ''}>${esc(exName(k))}</option>`).join('')}</select></label>
+    <label>Lift<select class="field" id="ep-goalex"><option value="">None</option>${[...new Set([...searchEx(''), ...(U.goal_ex ? [U.goal_ex] : [])])].map(k => `<option value="${esc(k)}" ${U.goal_ex === k ? 'selected' : ''}>${esc(exName(k))}</option>`).join('')}</select></label>
     <label>Target weight (lb)<input class="field" id="ep-target" inputmode="decimal" value="${esc(U.goal_target || '')}"></label>
     <button class="btn primary block">Save</button>
   </form>`;
@@ -503,7 +614,11 @@ function adminScreen() {
   const link = location.origin + location.pathname;
   const pcard = (p, why, rid) => { if (!p) return ''; return `<div class="mod-item"><span class="why">${esc(why)}</span><div><b>${esc(handle(p.user_id))}</b> · ${esc(p.category)} · ${ago(p.created_at)}</div><div>${esc(p.caption || '(no caption)')}</div>
     <div class="acts"><button class="btn sm" data-act="open" data-id="${p.id}">View</button><button class="btn sm" data-act="modOk" data-id="${p.id}" data-r="${rid || ''}">${p.status === 'held' ? 'Approve' : 'Keep'}</button><button class="btn sm danger" data-act="modRm" data-id="${p.id}" data-r="${rid || ''}">Remove</button></div></div>`; };
-  return head + `<div class="section-pad">
+  const pend = d.exercises.filter(x => x.status === 'pending');
+  const added = d.exercises.filter(x => x.status === 'approved').slice(0, 30);
+  const exRow = (x, acts) => `<div class="mod-item"><div><b>${esc(x.name)}</b> · ${esc(x.grp)}${x.added ? ' · added to bodyweight' : ''}</div>
+    <div class="when" style="padding:0">Added by ${esc(handle(x.created_by))} · ${ago(x.created_at)}</div><div class="acts">${acts}</div></div>`;
+  return head + schemaNotice() + `<div class="section-pad">
     <span class="label">Invite testers</span>
     <p class="when" style="padding:0">Anyone signing up needs this code. Change it any time; people already in keep their accounts.</p>
     <div class="code">${esc(d.code || '')}</div>
@@ -513,6 +628,11 @@ function adminScreen() {
     ${d.held.map(p => pcard(p, 'Held by off-topic screen')).join('')}
     ${d.reports.map(r => pcard(d.reportPosts.find(p => p.id === r.post_id), `Reported by ${handle(r.user_id)}: ${r.reason}`, r.id)).join('')}
     ${!d.held.length && !d.reports.length ? '<p class="when" style="padding:0">Nothing to review.</p>' : ''}
+    ${S.legacy ? '' : `<span class="label">New exercises to review (${pend.length})</span>
+    <p class="when" style="padding:0">Names that clearly describe a movement join the shared list on their own. These didn't, so only the person who made them can use them until you approve.</p>
+    ${pend.map(x => exRow(x, `<button class="btn sm" data-act="exReview" data-id="${x.id}" data-s="approved">Approve</button><button class="btn sm danger" data-act="exReview" data-id="${x.id}" data-s="rejected">Reject</button>`)).join('') || '<p class="when" style="padding:0">Nothing to review.</p>'}
+    ${added.length ? `<span class="label">Exercises members added</span>
+    ${added.map(x => exRow(x, `<button class="btn sm danger" data-act="exReview" data-id="${x.id}" data-s="rejected">Remove from list</button>`)).join('')}` : ''}`}
     <span class="label">Feedback (${d.feedback.filter(f => !f.done).length} open)</span>
     ${d.feedback.length ? `<button class="btn sm" data-act="copyFeedback">Copy all feedback</button>` : ''}
     ${d.feedback.map(f => `<div class="fb-item ${f.done ? 'done' : ''}"><div>${esc(f.body)}</div><div class="meta">${esc(handle(f.user_id))} · ${ago(f.created_at)} · on ${esc(f.screen)} · v${esc(f.app_version)}</div>
@@ -544,7 +664,7 @@ function logScreen() {
       return `<section class="exblock"><div class="exblock-head"><h3>${esc(exName(e.id))}</h3>${best ? `<span class="best">Best ${wt(e.id, best.weight)} × ${best.reps}</span>` : '<span class="best">First time: sets your baseline</span>'}
         <button class="text-btn" data-act="rmEx" data-ex="${i}" style="color:var(--muted)">Remove</button></div>
         <table class="sets"><thead><tr><th>Set</th><th>Previous</th><th>${exAdded(e.id) ? '+lb' : 'lb'}</th><th>Reps</th><th><span class="sr">Done</span></th></tr></thead><tbody>
-        ${e.sets.map((s, j) => `<tr class="${s.done ? 'done' : ''}"><td>${j + 1}</td><td class="prev">${last ? wt(e.id, last.weight) + ' × ' + last.reps : '–'}</td>
+        ${e.sets.map((s, j) => `<tr class="${s.done ? 'done' : ''}"><td><button class="setno ${s.kind || ''}" data-act="setKind" data-ex="${i}" data-set="${j}" aria-label="Set ${j + 1}, ${KIND_NAME[s.kind || 'normal']}. Change set type">${setLabel(e.sets, j)}</button></td><td class="prev">${last ? wt(e.id, last.weight) + ' × ' + last.reps : '–'}</td>
           <td><input id="w-${i}-${j}" data-ex="${i}" data-set="${j}" data-f="w" inputmode="decimal" value="${esc(s.w)}" aria-label="Weight, set ${j + 1}"></td>
           <td><input id="r-${i}-${j}" data-ex="${i}" data-set="${j}" data-f="r" inputmode="numeric" value="${esc(s.r)}" aria-label="Reps, set ${j + 1}"></td>
           <td><button class="check" data-act="toggleSet" data-ex="${i}" data-set="${j}" aria-label="Mark set ${j + 1} done">${ICON.check}</button></td></tr>
@@ -552,9 +672,16 @@ function logScreen() {
         </tbody></table>
         <button class="add-set" data-act="addSet" data-ex="${i}">+ Add set</button></section>`;
     }).join('')}
-    <div class="log-foot"><button class="btn block" data-act="addEx">+ Add exercise</button><button class="btn danger block" data-act="discard">Discard workout</button></div>`;
+    <div class="log-foot">${w.ex.length ? '<p class="when" style="padding:0">Tap a set number to mark it as a warm-up (W) or drop set (D). Warm-ups never count toward PRs.</p>' : ''}<button class="btn block" data-act="addEx">+ Add exercise</button><button class="btn danger block" data-act="discard">Discard workout</button></div>`;
 }
-function prLive(ex, s) { return s.done ? detect(ex, s.w, s.r).map(t => `<span>▲ PR · ${esc(t)}</span>`).join('') : ''; }
+const KIND_NAME = { normal: 'working set', warmup: 'warm-up', drop: 'drop set' };
+// Warm-ups show W and drop sets D; working sets are numbered 1, 2, 3 without counting either.
+function setLabel(sets, j) {
+  const k = sets[j].kind;
+  if (KIND_TAG[k]) return KIND_TAG[k];
+  return sets.slice(0, j + 1).filter(x => !KIND_TAG[x.kind]).length;
+}
+function prLive(ex, s) { return s.done && s.kind !== 'warmup' ? detect(ex, s.w, s.r).map(t => `<span>▲ PR · ${esc(t)}</span>`).join('') : ''; }
 function elapsed() {
   if (!S.workout) return '';
   const sec = Math.floor((Date.now() - S.workout.started) / 1000);
@@ -565,7 +692,7 @@ function summaryScreen() {
   const s = S.summary; const w = S.workout;
   return `<header class="top"><button class="icon-btn" data-act="unfinish" aria-label="Back to workout">${ICON.back}</button><h2>Share session</h2></header>
     <div class="done-hero"><h3>${s.groups.length ? `${s.groups.length} new PR${s.groups.length > 1 ? 's' : ''}` : 'Workout logged'}</h3>
-      <p>${esc(w.title)} · ${Math.max(1, Math.round((Date.now() - w.started) / 60000))} min · ${s.sets} sets · ${num(s.vol)} lb volume</p></div>
+      <p>${esc(w.title)} · ${Math.max(1, Math.round((Date.now() - w.started) / 60000))} min · ${s.sets} set${s.sets === 1 ? '' : 's'}${s.warm ? ` + ${s.warm} warm-up` : ''} · ${num(s.vol)} lb volume</p></div>
     ${s.groups.length ? `<div class="found">${s.groups.map(g => `<div class="found-item">
         <div class="found-top"><b>${esc(exName(g.ex))}</b><span>${wt(g.ex, g.w)} × ${g.r}</span></div>
         <div class="types">${g.types.map(t => `<span class="pr-badge">${ICON.trophy}${esc(t)}</span>`).join('')}</div></div>`).join('')}</div>` : ''}
@@ -585,6 +712,15 @@ function summaryScreen() {
 }
 
 /* ---------- Sheets ---------- */
+function exListHtml(text) {
+  const keys = searchEx(text); const t = text.trim();
+  const inWk = new Set((S.workout ? S.workout.ex : []).map(e => e.id));
+  const rows = keys.map(k => `<button data-act="pickEx" data-id="${esc(k)}"><b>${esc(exName(k))}</b><span>${EX[k].status === 'pending' ? 'Only you until approved · ' : ''}${inWk.has(k) ? 'In this workout · ' : ''}${esc(EX[k].grp)}</span></button>`).join('');
+  const create = S.legacy || !t ? '' : `<button class="ex-create" data-act="newEx"><b>+ Create "${esc(t)}"</b><span>Not on the list? Add it and everyone can use it.</span></button>`;
+  if (!keys.length) return `<p class="ex-none">No exercise matches "${esc(t)}".</p>` + create;
+  // Offer "Create" under the results unless a name already starts with what was typed.
+  return rows + (t && !keys.some(k => exIndex(k).key.startsWith(exKey(t))) ? create : '');
+}
 let lastSheet = null;
 function sheetHtml() {
   const sh = S.sheet; if (!sh) { lastSheet = null; return ''; }
@@ -606,8 +742,32 @@ function sheetHtml() {
       ${S.busy ? '<div class="upload-bar"><i></i></div>' : ''}
       <button class="btn primary block" data-act="cpost" ${sh.cat && !S.busy ? '' : 'disabled'}>${S.busy ? 'Posting…' : sh.cat ? 'Post to ' + sh.cat : 'Pick a category to post'}</button>`;
   } else if (sh.type === 'addEx') {
-    inner = `<h3>Add exercise</h3><input class="field" id="exq" placeholder="Search ${Object.keys(EX).length} exercises" autocomplete="off">
-      <div class="exlist" id="exlist">${Object.keys(EX).sort((a, b) => exName(a).localeCompare(exName(b))).map(k => `<button data-act="pickEx" data-id="${k}" data-n="${esc(exName(k).toLowerCase())}">${esc(exName(k))}</button>`).join('')}</div>`;
+    inner = `<div class="ex-top"><h3>Add exercise</h3>
+      <div class="search-row"><input class="field" id="exq" type="search" placeholder="Search ${pickable().length} exercises" value="${esc(sh.q || '')}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" aria-label="Search exercises">
+      ${S.legacy ? '' : '<button class="btn sm" data-act="newEx">+ New</button>'}</div></div>
+      <div class="exlist" id="exlist">${exListHtml(sh.q || '')}</div>`;
+  } else if (sh.type === 'newEx') {
+    inner = `<h3>New exercise</h3>
+      <label class="label" for="nxname">Name</label>
+      <input class="field" id="nxname" maxlength="40" value="${esc(sh.name)}" placeholder="For example: Cable lateral raise" autocomplete="off">
+      <span class="label">Muscle group</span>
+      <div class="tagpick">${EXGROUPS.map(g => `<button type="button" class="chip" data-act="nxGrp" data-id="${g}" aria-pressed="${sh.grp === g}">${g}</button>`).join('')}</div>
+      <span class="label">How you enter weight</span>
+      <div class="seg">${[['0', 'Weight lifted'], ['1', 'Added to bodyweight']].map(([k, l]) => `<button data-act="nxAdded" data-id="${k}" aria-pressed="${!!sh.added === (k === '1')}">${l}</button>`).join('')}</div>
+      <p>Vigor checks every new name. Clear exercise names join the shared list for everyone right away. Anything unclear is yours to use now and joins the list once a moderator approves it.</p>
+      ${sh.err ? `<p class="err">${esc(sh.err)}</p>` : ''}
+      <button class="btn primary block" data-act="nxSave" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Adding…' : 'Add exercise'}</button>
+      <button class="btn block" data-act="addEx">Back to the list</button>`;
+  } else if (sh.type === 'setKind') {
+    const set = S.workout && S.workout.ex[sh.ex] && S.workout.ex[sh.ex].sets[sh.set]; if (!set) { S.sheet = null; return ''; }
+    const cur = set.kind || 'normal';
+    inner = `<h3>Set type</h3>
+      ${[['normal', 'Working set', 'Counts toward PRs and volume.'], ['warmup', 'Warm-up (W)', 'Logged, but never counts toward PRs, history or volume.'], ['drop', 'Drop set (D)', 'A lighter set straight after a working set. Counts like any other set.']]
+        .map(([k, l, d]) => `<button class="opt kind-opt" data-act="setKindPick" data-id="${k}" aria-pressed="${cur === k}"><b>${l}</b><span>${d}</span></button>`).join('')}
+      <button class="opt" data-act="rmSet" style="color:var(--pr)">Remove this set</button>`;
+  } else if (sh.type === 'likers') {
+    const p = findPost(sh.id);
+    inner = `<h3>Likes</h3>${!p ? '' : sh.ready ? `<div class="sheet-people">${[...p.likers].reverse().map(peopleRow).join('')}</div>` : loading()}`;
   } else if (sh.type === 'noproof') {
     inner = `<h3>${esc(exName(sh.ex))}</h3><p>This PR has no photo or video yet. Next time you beat it, add proof when you share the session and the plate will link to that post.</p><button class="btn block" data-act="closeSheet">Close</button>`;
   } else if (sh.type === 'discard') {
@@ -629,7 +789,13 @@ function sheetHtml() {
       <button class="btn primary block" data-act="saveCode">Save code</button>`;
   }
   const anim = lastSheet !== sh; lastSheet = sh;
-  return `<div class="sheet-wrap" data-act="closeSheet"><div class="sheet ${anim ? 'anim' : ''}" role="dialog" aria-modal="true"><span class="grab"></span>${inner}</div></div>`;
+  return `<div class="sheet-wrap" data-act="closeSheet"><div class="sheet ${anim ? 'anim' : ''} ${sh.type === 'addEx' ? 'tall' : ''}" role="dialog" aria-modal="true"><span class="grab"></span>${inner}</div></div>`;
+}
+function postCopies(id) {
+  const out = [];
+  for (const k of ['feed', 'explore']) (S.data[k] || []).forEach(x => x.id === id && out.push(x));
+  if (S.data['post:' + id]) out.push(S.data['post:' + id]);
+  return out.filter(x => x.react);
 }
 function findPost(id) {
   for (const k of ['feed', 'explore']) { const p = (S.data[k] || []).find(x => x.id === id); if (p) return p; }
@@ -738,6 +904,38 @@ async function upload(file) {
   return path;
 }
 
+/* ---------- Reactions and likes ---------- */
+async function setReaction(id, k, on) {
+  const copies = postCopies(id); if (!copies.length || !!copies[0].mine[k] === on) return;
+  const apply = v => copies.forEach(p => {
+    p.mine[k] = v; p.react[k] += v ? 1 : -1;
+    if (k === 'like') p.likers = v ? [...p.likers, S.me.id] : p.likers.filter(u => u !== S.me.id);
+  });
+  apply(on); render(true);
+  try {
+    if (on) await q(sb.from('reactions').insert({ post_id: id, user_id: S.me.id, kind: k }));
+    else await q(sb.from('reactions').delete().match({ post_id: id, user_id: S.me.id, kind: k }));
+  } catch (e) { apply(!on); render(true); fail(e); }
+}
+// Double-tap a post's photo to like it, like Instagram. A single tap still opens the post, a moment later.
+const tap = { id: null, at: 0, timer: null };
+function onTap(el, ev) {
+  ev.preventDefault();
+  const id = el.dataset.id, t = Date.now();
+  if (tap.id === id && t - tap.at < 300) { clearTimeout(tap.timer); tap.id = null; likeBurst(id); return; }
+  clearTimeout(tap.timer); tap.id = id; tap.at = t;
+  const act = el.dataset.act;
+  tap.timer = setTimeout(() => { tap.id = null; if (act && A[act]) A[act](id, el, ev); }, 300);
+}
+function likeBurst(id) {
+  setReaction(id, 'like', true);
+  const media = document.querySelector(`[data-dbl][data-id="${id}"]`); if (!media) return;
+  const box = media.classList.contains('media') ? media : media.querySelector('.media'); if (!box) return;
+  const b = document.createElement('span'); b.className = 'burst'; b.innerHTML = ICON.heart; box.appendChild(b);
+  setTimeout(() => b.remove(), 900);
+  try { navigator.vibrate && navigator.vibrate(12); } catch (_) {}
+}
+
 /* ---------- Actions ---------- */
 const A = {
   authMode(id) { S.authMode = id; S.authMsg = ''; S.authErr = false; render(); },
@@ -750,13 +948,13 @@ const A = {
     const load = async () => { await loadFollows(); await ensureProfiles([...followersOf(u), ...followsOf(u)]); };
     if (el.dataset.swap && t && t.type === 'people') { t.which = which; render(true); } else push({ type: 'people', id: u, which }, load);
   },
-  async react(id, el) {
-    const p = findPost(id); const k = el.dataset.k; if (!p) return;
-    const on = !p.mine[k]; p.mine[k] = on; p.react[k] += on ? 1 : -1; render(true);
-    try {
-      if (on) await q(sb.from('reactions').insert({ post_id: id, user_id: S.me.id, kind: k }));
-      else await q(sb.from('reactions').delete().match({ post_id: id, user_id: S.me.id, kind: k }));
-    } catch (e) { p.mine[k] = !on; p.react[k] += on ? -1 : 1; render(true); fail(e); }
+  react(id, el) { const p = findPost(id); if (p) setReaction(id, el.dataset.k, !p.mine[el.dataset.k]); },
+  like(id) { const p = findPost(id); if (p) setReaction(id, 'like', !p.mine.like); },
+  async likers(id) {
+    const p = findPost(id); if (!p) return;
+    S.sheet = { type: 'likers', id, ready: false }; render(true);
+    try { await ensureProfiles(p.likers); } catch (e) { fail(e); }
+    if (S.sheet && S.sheet.type === 'likers') { S.sheet.ready = true; render(true); }
   },
   async follow(id) {
     const on = !iFollow(id);
@@ -877,9 +1075,57 @@ const A = {
     S.workout.ex.forEach(e => { const h = S.hist[e.id] || []; const l = h[h.length - 1]; e.sets = [0, 1, 2].map(() => ({ w: l ? String(+l.weight) : '', r: l ? String(l.reps) : '', done: false })); });
     saveWorkout(); render();
   },
-  addEx() { S.sheet = { type: 'addEx' }; render(true); setTimeout(() => $('#exq') && $('#exq').focus(), 60); },
+  addEx() {
+    const back = S.sheet && S.sheet.type === 'newEx' ? S.sheet.name : '';
+    S.sheet = { type: 'addEx', q: back }; render(true); setTimeout(() => $('#exq') && $('#exq').focus(), 60);
+  },
+  newEx() {
+    const typed = S.sheet && S.sheet.type === 'addEx' ? (S.sheet.q || '').trim() : '';
+    const name = typed ? typed.charAt(0).toUpperCase() + typed.slice(1) : '';
+    S.sheet = { type: 'newEx', name, grp: null, added: false, err: '' }; render(true);
+    setTimeout(() => { const f = $('#nxname'); if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); } }, 60);
+  },
+  nxGrp(g) { S.sheet.grp = g; S.sheet.err = ''; render(true); },
+  nxAdded(v) { S.sheet.added = v === '1'; render(true); },
+  async nxSave() {
+    const sh = S.sheet; if (S.busy) return;
+    const name = sh.name.replace(/\s+/g, ' ').trim(); sh.name = name;
+    sh.err = screenExName(name) || (sh.grp ? '' : 'Pick the muscle group it works most.');
+    if (sh.err) { render(true); return; }
+    // Already on the list (built in, or added by someone): use that one instead of making a copy.
+    const same = pickable().find(k => exIndex(k).key === exKey(name));
+    if (same) { toast(`${exName(same)} is already on the list, so we added that.`); A.pickEx(same); return; }
+    S.busy = true; render(true);
+    try {
+      const res = await q(sb.rpc('add_exercise', { p_name: name, p_group: sh.grp, p_added: !!sh.added }));
+      const r = Array.isArray(res) ? res[0] : res;
+      S.busy = false;
+      if (r.status === 'rejected') { sh.err = 'A moderator already turned that name down. Pick one from the list or try a clearer name.'; render(true); return; }
+      addCustomEx(r);
+      if (r.status === 'pending') { const mine = store.get('vigor.myEx', []); if (!mine.includes(r.id)) store.set('vigor.myEx', [...mine, r.id]); }
+      toast(r.status === 'pending' ? `${r.name} is ready for you to log. Everyone else sees it once a moderator approves it.`
+        : r.created_by !== S.me.id ? `${r.name} is already on the list, so we added that.` : `${r.name} is now on the shared list for everyone.`);
+      A.pickEx(r.id);
+    } catch (e) { S.busy = false; sh.err = e.message || 'Could not add that exercise. Try again.'; render(true); }
+  },
+  async exReview(id, el) {
+    const status = el.dataset.s;
+    try {
+      await q(sb.from('exercises').update({ status }).eq('id', id));
+      if (EX[id]) EX[id].status = status;
+      await loadAdmin(); render(true);
+      toast(status === 'approved' ? 'Approved. It is on the shared list now.' : 'Removed from the shared list. Old posts still show its name.');
+    } catch (e) { fail(e); }
+  },
+  setKind(_, el) { S.sheet = { type: 'setKind', ex: +el.dataset.ex, set: +el.dataset.set }; render(true); },
+  setKindPick(k) {
+    const sh = S.sheet; const set = S.workout.ex[sh.ex].sets[sh.set];
+    if (k === 'normal') delete set.kind; else set.kind = k;
+    S.sheet = null; saveWorkout(); render(true);
+  },
+  rmSet() { const sh = S.sheet; S.workout.ex[sh.ex].sets.splice(sh.set, 1); S.sheet = null; saveWorkout(); render(true); },
   async pickEx(id) {
-    S.sheet = null;
+    S.sheet = null; if (!S.workout) { render(true); return; }
     try { await loadHist(id); } catch (e) { fail(e); }
     const h = S.hist[id] || []; const l = h[h.length - 1];
     S.workout.ex.push({ id, sets: [0, 1, 2].map(() => ({ w: l ? String(+l.weight) : '', r: l ? String(l.reps) : '', done: false })) });
@@ -922,7 +1168,9 @@ const A = {
       w.ex.forEach(e => e.sets.forEach(x => {
         if (!x.done || !(+x.r > 0)) return;
         const g = s.groups.find(gr => gr.set === x);
-        rows.push({ workout_id: wk.id, user_id: S.me.id, ex: e.id, idx: idx++, weight: +x.w || 0, reps: +x.r, is_pr: !!g, pr_types: g ? g.types : [] });
+        const row = { workout_id: wk.id, user_id: S.me.id, ex: e.id, idx: idx++, weight: +x.w || 0, reps: +x.r, is_pr: !!g, pr_types: g ? g.types : [] };
+        if (!S.legacy) row.kind = x.kind || 'normal';
+        rows.push(row);
       }));
       if (rows.length) await q(sb.from('sets').insert(rows));
       let held = false;
@@ -974,7 +1222,8 @@ const FORMS = {
     S.busy = true; S.obErr = ''; render(true);
     try {
       const row = await q(sb.rpc('create_profile', { p_handle: o.handle.trim().toLowerCase(), p_name: o.name.trim(), p_bio: o.bio || '', p_tags: o.tags, p_code: o.code || '' }));
-      S.me = Array.isArray(row) ? row[0] : row; S.profiles[S.me.id] = S.me; S.busy = false; S.view = 'app';
+      S.me = Array.isArray(row) ? row[0] : row; S.profiles[S.me.id] = S.me; S.busy = false;
+      await checkSchema(); S.view = 'app';
       toast(S.me.is_admin ? 'Welcome. You are the admin; find invites under Profile.' : 'Welcome to Vigor');
       go(S.me.is_admin ? 'me' : 'explore');
     } catch (e) {
@@ -999,6 +1248,7 @@ const FORMS = {
 
 /* ---------- Events ---------- */
 document.addEventListener('click', ev => {
+  const dbl = ev.target.closest('[data-dbl]'); if (dbl) { onTap(dbl, ev); return; }
   const el = ev.target.closest('[data-act]'); if (!el) return;
   const fn = A[el.dataset.act]; if (!fn) return;
   if (el.dataset.act === 'closeSheet') { fn(null, el, ev); return; }
@@ -1022,7 +1272,8 @@ document.addEventListener('input', ev => {
     paintSearch();
     searchTimer = setTimeout(() => searchPeople(S.pq).then(paintSearch).catch(fail), 250);
   }
-  else if (t.id === 'exq') { const v = t.value.toLowerCase(); document.querySelectorAll('#exlist button').forEach(b => (b.hidden = !b.dataset.n.includes(v))); }
+  else if (t.id === 'exq' && S.sheet) { S.sheet.q = t.value; const list = $('#exlist'); if (list) list.innerHTML = exListHtml(t.value); }
+  else if (t.id === 'nxname' && S.sheet) { S.sheet.name = t.value; }
   else if (t.id === 'ccap' && S.sheet) { S.sheet.caption = t.value; const w = $('#cwarn'); if (w) w.hidden = !OFFTOPIC.test(t.value); }
 });
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet && !S.busy) { S.sheet = null; render(true); } });
@@ -1038,7 +1289,9 @@ async function boot() {
   try {
     const rows = await q(sb.from('profiles').select('*').eq('id', S.session.user.id));
     if (!rows.length) { S.view = 'onboard'; render(); return; }
-    S.me = rows[0]; S.profiles[S.me.id] = S.me; S.view = 'app';
+    S.me = rows[0]; S.profiles[S.me.id] = S.me;
+    await checkSchema();
+    S.view = 'app';
     S.workout = store.get('vigor.workout', null);
     go(S.workout ? 'log' : 'feed');
   } catch (e) { S.view = 'auth'; S.authMsg = e.message; S.authErr = true; render(); }

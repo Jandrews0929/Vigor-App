@@ -23,6 +23,19 @@ It is a plain installable web app (no build step) backed by Supabase. Testers op
 5. **First account.** Open the app, create an account, and leave the invite code blank. The first profile becomes the admin.
 6. **Invite testers.** Profile > ⋯ > Admin shows the invite code and a ready-to-send invite message.
 
+## Updating the database
+
+When a release changes `supabase/schema.sql`, re-run the whole file in SQL Editor (it keeps existing data). The app checks the database version at sign-in; if the file hasn't been re-run, admins see a "Database update needed" notice and the new features stay off until it is.
+
+| Schema version | Adds |
+| --- | --- |
+| 1 | Accounts, posts, workouts, reactions, comments, reports, feedback, invites |
+| 2 (app 0.1.2) | Likes, warm-up and drop sets, member-created exercises |
+
+## Member-created exercises
+
+Anyone can add an exercise from the Add exercise sheet. The database screens each name (`add_exercise` in schema.sql): links, ads and offensive words are refused; names that describe a movement or equipment (press, curl, cable, dumbbell and so on) join the shared list for everyone at once; anything else is usable by its creator and waits in Admin > New exercises to review. Admins can also remove any member-added exercise from the list; posts that used it keep its name.
+
 ## Feedback loop
 
 Every screen has a Feedback button. Feedback lands in the `feedback` table with the screen, app version and device. Admins read it under Profile > Admin and can copy all of it at once to paste into a chat with Claude.

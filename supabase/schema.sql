@@ -74,7 +74,7 @@ create index if not exists follows_followee_idx on public.follows(followee);
 create table if not exists public.reactions (
   post_id uuid not null references public.posts(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade default auth.uid(),
-  kind text not null check (kind in ('strong','form','inspired')),
+  kind text not null check (kind in ('strong','form','inspired','like')),
   created_at timestamptz not null default now(),
   primary key (post_id, user_id, kind)
 );
@@ -105,6 +105,26 @@ create table if not exists public.feedback (
   app_version text not null default '',
   device text not null default '' check (char_length(device) <= 300),
   done boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ---------- v2: set types, likes, member-created exercises ----------
+alter table public.sets add column if not exists kind text not null default 'normal';
+do $$ begin
+  alter table public.sets add constraint sets_kind_check check (kind in ('normal','warmup','drop'));
+exception when duplicate_object then null; end $$;
+
+alter table public.reactions drop constraint if exists reactions_kind_check;
+alter table public.reactions add constraint reactions_kind_check check (kind in ('strong','form','inspired','like'));
+
+create table if not exists public.exercises (
+  id text primary key default ('x' || substr(md5(random()::text || clock_timestamp()::text), 1, 10)),
+  name text not null check (char_length(name) between 3 and 40),
+  name_key text not null unique,
+  grp text not null default 'Other' check (grp in ('Legs','Push','Pull','Hinge','Arms','Shoulders','Core','Cardio','Mobility','Other')),
+  added boolean not null default false,
+  status text not null default 'pending' check (status in ('approved','pending','rejected')),
+  created_by uuid references public.profiles(id) on delete set null default auth.uid(),
   created_at timestamptz not null default now()
 );
 
@@ -205,6 +225,39 @@ drop trigger if exists profiles_guard on public.profiles;
 create trigger profiles_guard before update on public.profiles
   for each row execute function public.guard_profile();
 
+-- Members add exercises only through this function. It screens the name:
+-- links, ads and offensive words are refused; names that read like a movement
+-- or name equipment join the shared library at once; anything else is usable
+-- by its creator and waits for an admin to approve it for everyone.
+create or replace function public.add_exercise(p_name text, p_group text, p_added boolean)
+returns public.exercises
+language plpgsql security definer set search_path = public as $$
+declare
+  n text; k text; row exercises; ok boolean;
+begin
+  if not public.is_member() then raise exception 'Join Vigor first'; end if;
+  n := regexp_replace(trim(coalesce(p_name, '')), '\s+', ' ', 'g');
+  if char_length(n) < 3 or char_length(n) > 40 then raise exception 'Exercise names need 3 to 40 characters.'; end if;
+  if (select count(*) from regexp_matches(n, '[[:alpha:]]', 'g')) < 3 then
+    raise exception 'Use the exercise''s name, for example "Cable lateral raise".';
+  end if;
+  if n ~* '(https?://|www\.|\.com|@|\m(crypto|bitcoin|nft|casino|betting|giveaway|buy|sale|discount|promo\w*|coupon|subscribe|onlyfans|porn\w*|sex\w*|nude\w*|fuck\w*|shit\w*|bitch\w*|dick\w*)\M)' then
+    raise exception 'That doesn''t look like an exercise. Names can''t include links, ads or offensive words.';
+  end if;
+  k := lower(regexp_replace(n, '[^[:alnum:]]', '', 'g'));
+  select * into row from exercises where name_key = k;
+  if found then return row; end if;
+  ok := n ~* '\m(squat|press|bench|deadlift|row|curl|raise|pull|push|chin|dip|lunge|step|thrust|bridge|extension|fly|flye|crunch|plank|hold|carry|walk|swing|clean|snatch|jerk|jump|hop|sprint|run|bike|cycle|erg|rower|ski|swim|stretch|rotation|twist|rollout|situp|sit-up|shrug|calf|kickback|pulldown|pullover|abduction|adduction|crossover|morning|hyper|nordic|sled|rope|burpee|thruster|climber|lift|hang|toes|leg|hip|glute|hamstring|quad|chest|shoulder|delt|tricep|bicep|lat|trap|core|abs|oblique|grip|wrist|forearm|dumbbell|barbell|kettlebell|cable|machine|band|smith|landmine|trx|ring|bodyweight|db|bb|kb|yoga|pose|flow|mobility|foam|roll)\w*';
+  insert into exercises (name, name_key, grp, added, status, created_by)
+  values (n, k, coalesce(nullif(p_group, ''), 'Other'), coalesce(p_added, false), case when ok then 'approved' else 'pending' end, auth.uid())
+  returning * into row;
+  return row;
+end;
+$$;
+
+-- Lets the app check which version of this file the database has.
+create or replace function public.vigor_schema_version() returns int language sql immutable as $$ select 2 $$;
+
 -- ---------- Row level security ----------
 alter table public.profiles enable row level security;
 alter table public.app_settings enable row level security;
@@ -216,10 +269,11 @@ alter table public.reactions enable row level security;
 alter table public.comments enable row level security;
 alter table public.reports enable row level security;
 alter table public.feedback enable row level security;
+alter table public.exercises enable row level security;
 
 do $$ declare r record; begin
   for r in select policyname, tablename from pg_policies where schemaname = 'public'
-    and tablename in ('profiles','app_settings','workouts','sets','posts','follows','reactions','comments','reports','feedback')
+    and tablename in ('profiles','app_settings','workouts','sets','posts','follows','reactions','comments','reports','feedback','exercises')
   loop execute format('drop policy %I on public.%I', r.policyname, r.tablename); end loop;
 end $$;
 
@@ -264,6 +318,13 @@ create policy "admins mark feedback" on public.feedback for update to authentica
 grant execute on function public.create_profile(text, text, text, text[], text) to authenticated;
 grant execute on function public.get_invite_code() to authenticated;
 grant execute on function public.set_invite_code(text) to authenticated;
+grant execute on function public.add_exercise(text, text, boolean) to authenticated;
+grant execute on function public.vigor_schema_version() to authenticated;
+
+-- Everyone can read every exercise so names in old posts still resolve; the app's picker shows
+-- approved ones plus the viewer's own. Only admins change status.
+create policy "members read exercises" on public.exercises for select to authenticated using (public.is_member());
+create policy "admins review exercises" on public.exercises for update to authenticated using (public.is_admin());
 
 -- ---------- Storage for photos and videos ----------
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
