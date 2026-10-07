@@ -128,6 +128,19 @@ create table if not exists public.exercises (
   created_at timestamptz not null default now()
 );
 
+-- ---------- v3: profile photos, comment replies and comment votes ----------
+alter table public.profiles add column if not exists avatar_path text;
+alter table public.comments add column if not exists parent_id uuid references public.comments(id) on delete cascade;
+create index if not exists comments_parent_idx on public.comments(parent_id);
+
+create table if not exists public.comment_votes (
+  comment_id uuid not null references public.comments(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade default auth.uid(),
+  value smallint not null check (value in (1, -1)),
+  created_at timestamptz not null default now(),
+  primary key (comment_id, user_id)
+);
+
 -- ---------- Helpers ----------
 create or replace function public.is_member() returns boolean
 language sql stable security definer set search_path = public as $$
@@ -218,12 +231,35 @@ language plpgsql security definer set search_path = public as $$
 begin
   if new.is_admin <> old.is_admin and not public.is_admin() then new.is_admin := old.is_admin; end if;
   new.id := old.id;
+  -- a profile photo has to be a file in that person's own media folder
+  if new.avatar_path is distinct from old.avatar_path and new.avatar_path is not null
+     and new.avatar_path not like old.id::text || '/%' then
+    raise exception 'Profile photos must be uploaded from your own account';
+  end if;
   return new;
 end;
 $$;
 drop trigger if exists profiles_guard on public.profiles;
 create trigger profiles_guard before update on public.profiles
   for each row execute function public.guard_profile();
+
+-- Replies hang off a top-level comment on the same post. A reply to a reply
+-- is attached to that thread's top comment, so threads stay one level deep.
+create or replace function public.screen_comment() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare parent record;
+begin
+  if new.parent_id is not null then
+    select post_id, parent_id into parent from comments where id = new.parent_id;
+    if not found or parent.post_id <> new.post_id then raise exception 'That comment is no longer there'; end if;
+    if parent.parent_id is not null then new.parent_id := parent.parent_id; end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists comments_screen on public.comments;
+create trigger comments_screen before insert on public.comments
+  for each row execute function public.screen_comment();
 
 -- Members add exercises only through this function. It screens the name:
 -- links, ads and offensive words are refused; names that read like a movement
@@ -256,7 +292,7 @@ end;
 $$;
 
 -- Lets the app check which version of this file the database has.
-create or replace function public.vigor_schema_version() returns int language sql immutable as $$ select 2 $$;
+create or replace function public.vigor_schema_version() returns int language sql immutable as $$ select 3 $$;
 
 -- ---------- Row level security ----------
 alter table public.profiles enable row level security;
@@ -270,10 +306,11 @@ alter table public.comments enable row level security;
 alter table public.reports enable row level security;
 alter table public.feedback enable row level security;
 alter table public.exercises enable row level security;
+alter table public.comment_votes enable row level security;
 
 do $$ declare r record; begin
   for r in select policyname, tablename from pg_policies where schemaname = 'public'
-    and tablename in ('profiles','app_settings','workouts','sets','posts','follows','reactions','comments','reports','feedback','exercises')
+    and tablename in ('profiles','app_settings','workouts','sets','posts','follows','reactions','comments','reports','feedback','exercises','comment_votes')
   loop execute format('drop policy %I on public.%I', r.policyname, r.tablename); end loop;
 end $$;
 
@@ -306,6 +343,11 @@ create policy "unreact" on public.reactions for delete to authenticated using (u
 create policy "members read comments" on public.comments for select to authenticated using (public.is_member());
 create policy "comment" on public.comments for insert to authenticated with check (user_id = auth.uid() and public.is_member());
 create policy "delete comment" on public.comments for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+create policy "members read comment votes" on public.comment_votes for select to authenticated using (public.is_member());
+create policy "vote on comments" on public.comment_votes for insert to authenticated with check (user_id = auth.uid() and public.is_member());
+create policy "change own vote" on public.comment_votes for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "remove own vote" on public.comment_votes for delete to authenticated using (user_id = auth.uid());
 
 create policy "report" on public.reports for insert to authenticated with check (user_id = auth.uid() and public.is_member());
 create policy "admins read reports" on public.reports for select to authenticated using (public.is_admin());

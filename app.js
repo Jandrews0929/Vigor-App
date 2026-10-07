@@ -1,7 +1,7 @@
 /* Vigor trial app. Plain JavaScript, no build step. Data lives in Supabase (see supabase/schema.sql). */
 'use strict';
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const CFG = window.VIGOR_CONFIG || {};
 
 /* ---------- Exercise library ----------
@@ -107,8 +107,11 @@ const S = {
   view: 'loading', authMode: 'signin', authMsg: '', session: null, me: null,
   tab: 'feed', stack: [], sheet: null, data: {}, profiles: {}, follows: [], hist: {},
   workout: null, summary: null, rest: null, esort: 'popular', ecat: 'All', pq: '', presults: null, gridFilter: 'All', busy: false,
+  schema: 1, // which version of supabase/schema.sql the database has; checked at sign-in
   legacy: false // true until the database has run the v2 schema (likes, set types, custom exercises)
 };
+const NEED_SCHEMA = 3;
+const v3 = () => S.schema >= 3; // profile photos, comment replies and comment votes
 let sb = null;
 
 /* ---------- Helpers ---------- */
@@ -150,11 +153,14 @@ const ICON = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>',
   trophy: '<svg viewBox="0 0 24 24"><path d="M7 3h10v2h3v3a4 4 0 0 1-4 4h-.3A5 5 0 0 1 13 14.9V18h3v3H8v-3h3v-3.1A5 5 0 0 1 8.3 12H8a4 4 0 0 1-4-4V5h3zm0 4H6v1a2 2 0 0 0 1 1.7zm10 0v2.7A2 2 0 0 0 18 8V7z"/></svg>',
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>',
-  heart: '<svg viewBox="0 0 24 24" stroke-linejoin="round"><path d="M12 20.5s-7.6-4.5-9.3-9.6C1.6 7.4 3.8 4.5 7 4.5c2.1 0 3.7 1.2 5 3 1.3-1.8 2.9-3 5-3 3.2 0 5.4 2.9 4.3 6.4-1.7 5.1-9.3 9.6-9.3 9.6z"/></svg>'
+  heart: '<svg viewBox="0 0 24 24" stroke-linejoin="round"><path d="M12 20.5s-7.6-4.5-9.3-9.6C1.6 7.4 3.8 4.5 7 4.5c2.1 0 3.7 1.2 5 3 1.3-1.8 2.9-3 5-3 3.2 0 5.4 2.9 4.3 6.4-1.7 5.1-9.3 9.6-9.3 9.6z"/></svg>',
+  thumb: '<svg viewBox="0 0 24 24" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M7 10v11H3V10zM7 10l4-8c1.7 0 3 1.3 3 3v4h5.2a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 17.8 21H7"/></svg>',
+  camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>'
 };
 function hueOf(id) { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 function avatar(id, cls = '') {
   const p = S.profiles[id] || { name: '?' };
+  if (p.avatar_path) return `<img class="av ${cls}" src="${esc(mediaUrl(p.avatar_path))}" alt="" loading="lazy" decoding="async">`;
   const ini = (p.name || '?').split(/\s+/).map(x => x[0]).slice(0, 2).join('').toUpperCase();
   return `<span class="av ${cls}" style="background:hsl(${hueOf(id)} 55% 40%)">${esc(ini)}</span>`;
 }
@@ -251,6 +257,15 @@ async function loadPost(id) {
   if (!rows.length) { S.data['post:' + id] = null; return; }
   const p = (await hydratePosts(rows))[0];
   p.comments = await q(sb.from('comments').select('*').eq('post_id', id).order('created_at'));
+  p.comments.forEach(c => { c.up = 0; c.down = 0; c.vote = 0; });
+  if (v3() && p.comments.length) {
+    const votes = await q(sb.from('comment_votes').select('comment_id,user_id,value').in('comment_id', p.comments.map(c => c.id)));
+    votes.forEach(v => {
+      const c = p.comments.find(x => x.id === v.comment_id); if (!c) return;
+      if (v.value > 0) c.up++; else c.down++;
+      if (v.user_id === S.me.id) c.vote = v.value;
+    });
+  }
   await ensureProfiles(p.comments.map(c => c.user_id));
   const pr = p.sets.find(s => s.is_pr);
   if (pr) {
@@ -287,7 +302,8 @@ let searchTimer;
 
 // Checks which version of schema.sql the database has, then loads member-created exercises.
 async function checkSchema() {
-  try { S.legacy = !((await q(sb.rpc('vigor_schema_version'))) >= 2); } catch (_) { S.legacy = true; }
+  try { S.schema = +(await q(sb.rpc('vigor_schema_version'))) || 1; } catch (_) { S.schema = 1; }
+  S.legacy = S.schema < 2;
   if (!S.legacy) { try { await loadExercises(); } catch (e) { console.error(e); } }
 }
 async function loadExercises() {
@@ -473,8 +489,9 @@ function installNotice() {
     <div class="row">${!ios && deferredInstall ? '<button class="btn primary sm" data-act="install">Install</button>' : ''}<button class="btn sm" data-act="dismissInstall">Not now</button></div></div>`;
 }
 function schemaNotice() {
-  if (!S.legacy || !S.me.is_admin) return '';
-  return `<div class="notice warnbox"><b>Database update needed</b><span>This version of Vigor needs the latest supabase/schema.sql. Open Supabase, go to SQL Editor, paste the whole file and press Run. Until then likes, warm-up and drop sets, and new exercises are turned off.</span></div>`;
+  if (S.schema >= NEED_SCHEMA || !S.me.is_admin) return '';
+  const off = S.schema < 2 ? 'likes, warm-up and drop sets, new exercises, profile photos, and comment replies and votes' : 'profile photos, and comment replies and votes';
+  return `<div class="notice warnbox"><b>Database update needed</b><span>This version of Vigor needs the latest supabase/schema.sql. Open Supabase, go to SQL Editor, paste the whole file and press Run. Until then ${off} are turned off.</span></div>`;
 }
 function feedScreen() {
   const list = S.data.feed;
@@ -536,17 +553,39 @@ function historyChart(hist) {
         ${(h.length <= 6 || i % 2 === 0 || i === h.length - 1) ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="var(--muted)">${shortDate(s.d)}</text>` : ''}`).join('')}
     </svg></div>`;
 }
+// @handles in comments open that person's profile.
+function linkMentions(body) {
+  return esc(body).replace(/@([a-z0-9._]{3,24})/gi, (m, h) => `<button class="mention" data-act="profileByHandle" data-id="${h.toLowerCase()}">${m}</button>`);
+}
+function commentHtml(c, reply) {
+  const canDel = c.user_id === S.me.id || S.me.is_admin;
+  return `<div class="comment ${reply ? 'reply' : ''}">
+    <button class="c-av" data-act="profile" data-id="${c.user_id}" aria-label="${esc(handle(c.user_id))}'s profile">${avatar(c.user_id)}</button>
+    <div class="c-main"><p><button class="c-name" data-act="profile" data-id="${c.user_id}">${esc(handle(c.user_id))}</button> ${linkMentions(c.body)}</p>
+      <div class="c-meta"><span>${ago(c.created_at)}</span>
+        ${v3() ? `<button class="vote" data-act="vote" data-id="${c.id}" data-v="1" aria-pressed="${c.vote === 1}" aria-label="Thumbs up${c.up ? ', ' + c.up : ''}">${ICON.thumb}${c.up || ''}</button>
+        <button class="vote down" data-act="vote" data-id="${c.id}" data-v="-1" aria-pressed="${c.vote === -1}" aria-label="Thumbs down${c.down ? ', ' + c.down : ''}">${ICON.thumb}${c.down || ''}</button>
+        <button data-act="replyTo" data-id="${c.id}">Reply</button>` : ''}
+        ${canDel ? `<button data-act="delComment" data-id="${c.id}">Delete</button>` : ''}</div></div></div>`;
+}
+function commentsHtml(p) {
+  if (!p.comments.length) return '<p class="when" style="padding:0">No comments yet. Start the conversation.</p>';
+  const ids = new Set(p.comments.map(c => c.id));
+  const tops = p.comments.filter(c => !c.parent_id || !ids.has(c.parent_id));
+  return tops.map(c => commentHtml(c) + p.comments.filter(r => r.parent_id === c.id).map(r => commentHtml(r, true)).join('')).join('');
+}
 function postScreen(id) {
   const p = S.data['post:' + id];
   if (p === undefined) return topBar(h2('Post'), '', true) + loading();
   if (p === null) return topBar(h2('Post'), '', true) + '<div class="empty">This post was removed.</div>';
+  const rt = S.replyTo && S.replyTo.post === p.id ? S.replyTo : null;
   return topBar(h2(p.category === 'PR' ? 'PR proof' : 'Post'), '', true) + postCard(p, true) +
     `<div class="section-pad">
       ${p.history ? historyChart(p.history) : ''}
-      <span class="label">Comments</span>
-      ${p.comments.length ? p.comments.map(c => `<div class="comment">${avatar(c.user_id)}<p><b>${esc(handle(c.user_id))}</b> ${esc(c.body)}
-        ${c.user_id === S.me.id || S.me.is_admin ? ` <button class="text-btn" data-act="delComment" data-id="${c.id}" style="color:var(--muted)">Delete</button>` : ''}</p></div>`).join('') : '<p class="when" style="padding:0">No comments yet.</p>'}
-      <form class="cform" data-form="comment" data-id="${p.id}"><input class="field" id="cmt" placeholder="Add a comment" autocomplete="off" maxlength="1000"><button class="btn primary sm">Post</button></form>
+      <span class="label">Comments${p.comments.length ? ' · ' + p.comments.length : ''}</span>
+      ${commentsHtml(p)}
+      ${rt ? `<div class="replying">Replying to <b>${esc(rt.handle)}</b><button class="text-btn" data-act="cancelReply">Cancel</button></div>` : ''}
+      <form class="cform" data-form="comment" data-id="${p.id}"><input class="field" id="cmt" placeholder="${rt ? 'Write a reply' : 'Add a comment'}" autocomplete="off" maxlength="1000" value="${esc(S.cdraft && S.cdraft.post === p.id ? S.cdraft.text : '')}"><button class="btn primary sm">Post</button></form>
     </div>`;
 }
 function profileScreen(u) {
@@ -565,7 +604,7 @@ function profileScreen(u) {
     goal = `<div class="goal"><div class="row"><b>${esc(U.goal_label)}</b><span>${cur ? wt(U.goal_ex, cur) : 0} of ${wt(U.goal_ex, U.goal_target)} lb</span></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
   }
   return head + `<section class="prof">
-      <div class="prof-head">${avatar(u, 'lg')}<div><h3>${esc(U.name)}${U.is_admin ? '<span class="cred">Team</span>' : ''}</h3><div class="hd">@${esc(U.handle)}</div>
+      <div class="prof-head">${mine && v3() ? `<button class="av-edit" data-act="pickAvatar" aria-label="Change profile photo">${avatar(u, 'lg')}<span class="cam">${ICON.camera}</span></button>` : avatar(u, 'lg')}<div><h3>${esc(U.name)}${U.is_admin ? '<span class="cred">Team</span>' : ''}</h3><div class="hd">@${esc(U.handle)}</div>
         <div class="counts"><div><b>${d.posts.length}</b><span>posts</span></div>
           <button data-act="people" data-id="${u}:followers"><b>${fmtCount(followersOf(u).length)}</b><span>followers</span></button>
           <button data-act="people" data-id="${u}:following"><b>${followsOf(u).length}</b><span>following</span></button></div></div></div>
@@ -596,8 +635,11 @@ function peopleScreen(u, which) {
     ${!list.length ? `<div class="empty">${which === 'followers' ? 'No followers yet.' : 'Not following anyone yet.'}</div>` : ''}`;
 }
 function editProfileScreen() {
-  const U = S.me;
+  const U = { ...S.me, ...(S.epDraft || {}) };
   return topBar(h2('Edit profile'), '', true) + `<form class="form" data-form="editProfile">
+    ${v3() ? `<div class="photo-row">${avatar(S.me.id, 'lg')}<div class="stack" style="gap:4px;align-items:flex-start">
+      <button type="button" class="btn sm" data-act="pickAvatar" ${S.avatarBusy ? 'disabled' : ''}>${S.avatarBusy ? 'Uploading…' : S.me.avatar_path ? 'Change photo' : 'Add a photo'}</button>
+      ${S.me.avatar_path && !S.avatarBusy ? '<button type="button" class="text-btn" data-act="rmAvatar" style="color:var(--muted);padding-left:0">Remove photo</button>' : ''}</div></div>` : ''}
     <label>Name<input class="field" id="ep-name" required maxlength="60" value="${esc(U.name)}"></label>
     <label>Bio<textarea class="field" id="ep-bio" maxlength="200">${esc(U.bio)}</textarea></label>
     <div class="stack" style="gap:6px"><span class="label">Focus</span><div class="tagpick">${FOCUS.map(t => `<button type="button" class="chip" data-act="epTag" data-id="${t}" aria-pressed="${(S.epTags || U.tags).includes(t)}">${t}</button>`).join('')}</div></div>
@@ -868,9 +910,11 @@ function saveWorkout() { store.set('vigor.workout', S.workout); }
 /* ---------- Media ---------- */
 const filepick = document.createElement('input');
 filepick.type = 'file'; filepick.accept = 'image/*,video/*'; filepick.hidden = true; document.body.appendChild(filepick);
-function pick() { filepick.value = ''; filepick.click(); }
+let pickFor = null;
+function pick(target) { pickFor = target; filepick.accept = target === 'avatar' ? 'image/*' : 'image/*,video/*'; filepick.value = ''; filepick.click(); }
 filepick.addEventListener('change', async () => {
   const f = filepick.files[0]; if (!f) return;
+  if (pickFor === 'avatar') { setAvatar(f); return; }
   try {
     const file = await prepareMedia(f);
     if (S.sheet && S.sheet.type === 'compose') S.sheet.file = file;
@@ -896,6 +940,45 @@ async function prepareMedia(f) {
   } catch (_) { ext = (f.name.split('.').pop() || 'jpg').toLowerCase(); }
   if (blob.size > 50 * 1024 * 1024) throw new Error('That photo is too large. Try a smaller one.');
   return { kind: 'photo', blob, ext, type, preview: URL.createObjectURL(blob) };
+}
+// Profile photos: cropped to a centered square, 400px, JPEG, stored in the person's own media folder.
+async function squarePhoto(f) {
+  let img;
+  try { img = await createImageBitmap(f); } catch (_) {
+    img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That photo could not be read. Try a different one.')); i.src = URL.createObjectURL(f); });
+  }
+  const w = img.width, h = img.height, side = Math.min(w, h), out = Math.min(400, side);
+  const c = document.createElement('canvas'); c.width = c.height = out;
+  c.getContext('2d').drawImage(img, (w - side) / 2, (h - side) / 2, side, side, 0, 0, out, out);
+  return new Promise(res => c.toBlob(res, 'image/jpeg', 0.85));
+}
+async function setAvatar(f) {
+  if (!f.type.startsWith('image')) { toast('Pick a photo, not a video, for your profile picture'); return; }
+  readEp(); S.avatarBusy = true; render(true);
+  try {
+    const blob = await squarePhoto(f);
+    const path = `${S.me.id}/avatar-${Date.now()}.jpg`;
+    const { error } = await sb.storage.from('media').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+    if (error) throw error;
+    const old = S.me.avatar_path;
+    const rows = await q(sb.from('profiles').update({ avatar_path: path }).eq('id', S.me.id).select());
+    S.me = rows[0]; S.profiles[S.me.id] = S.me;
+    if (old) sb.storage.from('media').remove([old]).catch(() => {});
+    toast('Profile photo updated');
+  } catch (e) { fail(e); }
+  S.avatarBusy = false; render(true);
+}
+function readEp() {
+  const v = id => (document.getElementById(id) || {}).value;
+  if (v('ep-name') === undefined) return;
+  S.epDraft = { name: v('ep-name'), bio: v('ep-bio'), goal_label: v('ep-goal'), goal_ex: v('ep-goalex') || null, goal_target: v('ep-target') };
+}
+function findComment(id) {
+  for (const k of Object.keys(S.data)) {
+    if (!k.startsWith('post:') || !S.data[k] || !S.data[k].comments) continue;
+    const c = S.data[k].comments.find(x => x.id === id); if (c) return [S.data[k], c];
+  }
+  return [null, null];
 }
 async function upload(file) {
   const path = `${S.me.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${file.ext}`;
@@ -989,8 +1072,43 @@ const A = {
       go(S.tab);
     } catch (e) { fail(e); }
   },
+  async vote(id, el) {
+    const [, c] = findComment(id); if (!c) return;
+    const v = +el.dataset.v, prev = c.vote, next = prev === v ? 0 : v;
+    const apply = (from, to) => { if (from === 1) c.up--; if (from === -1) c.down--; if (to === 1) c.up++; if (to === -1) c.down++; c.vote = to; };
+    apply(prev, next); render(true);
+    try {
+      if (!next) await q(sb.from('comment_votes').delete().match({ comment_id: id, user_id: S.me.id }));
+      else await q(sb.from('comment_votes').upsert({ comment_id: id, user_id: S.me.id, value: next }, { onConflict: 'comment_id,user_id' }));
+    } catch (e) { apply(next, prev); render(true); fail(e); }
+  },
+  replyTo(id) {
+    const [p, c] = findComment(id); if (!c) return;
+    const inp = $('#cmt'); const typed = inp ? inp.value.trim() : '';
+    const tag = c.user_id === S.me.id ? '' : handle(c.user_id) + ' ';
+    S.replyTo = { post: p.id, id, handle: handle(c.user_id) };
+    S.cdraft = { post: p.id, text: typed && !/^@\S+\s*$/.test(typed) ? typed : tag };
+    render(true);
+    const f = $('#cmt'); if (f) { f.scrollIntoView({ block: 'center' }); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
+  },
+  cancelReply() { S.replyTo = null; if (S.cdraft && /^@\S+\s*$/.test(S.cdraft.text)) S.cdraft = null; render(true); },
+  async profileByHandle(h) {
+    let u = Object.values(S.profiles).find(p => String(p.handle).toLowerCase() === h);
+    if (!u) { try { const rows = await q(sb.from('profiles').select('*').eq('handle', h)); u = rows[0]; if (u) S.profiles[u.id] = u; } catch (e) { fail(e); return; } }
+    if (u) A.profile(u.id); else toast(`No one is called @${h}`);
+  },
+  pickAvatar() { readEp(); pick('avatar'); },
+  async rmAvatar() {
+    readEp(); const old = S.me.avatar_path; if (!old) return;
+    try {
+      const rows = await q(sb.from('profiles').update({ avatar_path: null }).eq('id', S.me.id).select());
+      S.me = rows[0]; S.profiles[S.me.id] = S.me; render(true);
+      sb.storage.from('media').remove([old]).catch(() => {});
+      toast('Profile photo removed');
+    } catch (e) { fail(e); }
+  },
   async delComment(id) {
-    try { await q(sb.from('comments').delete().eq('id', id)); const t = S.stack[S.stack.length - 1]; await loadPost(t.id); render(true); } catch (e) { fail(e); }
+    try { await q(sb.from('comments').delete().eq('id', id)); S.replyTo = null; const t = S.stack[S.stack.length - 1]; await loadPost(t.id); render(true); } catch (e) { fail(e); }
   },
   gridf(id) { S.gridFilter = id; render(true); },
   esort(id) { S.esort = id; render(true); },
@@ -1008,8 +1126,8 @@ const A = {
     S.busy = false; render(true);
   },
   meMenu() { S.sheet = { type: 'meMenu' }; render(true); },
-  editProfile() { S.epTags = null; S.sheet = null; push({ type: 'editProfile' }); },
-  epTag(t) { const tags = S.epTags || [...S.me.tags]; S.epTags = tags.includes(t) ? tags.filter(x => x !== t) : [...tags, t]; render(true); },
+  editProfile() { S.epTags = null; S.epDraft = null; S.sheet = null; push({ type: 'editProfile' }); },
+  epTag(t) { readEp(); const tags = S.epTags || [...S.me.tags]; S.epTags = tags.includes(t) ? tags.filter(x => x !== t) : [...tags, t]; render(true); },
   admin() { S.sheet = null; push({ type: 'admin' }, loadAdmin); },
   async copyInvite() {
     const t = $('#invite-msg');
@@ -1233,15 +1351,23 @@ const FORMS = {
     }
   },
   async comment(f) {
-    const inp = $('#cmt'); const body = inp.value.trim(); if (!body) return;
-    try { await q(sb.from('comments').insert({ post_id: f.dataset.id, user_id: S.me.id, body })); await loadPost(f.dataset.id); render(true); } catch (e) { fail(e); }
+    const inp = $('#cmt'); const body = inp.value.trim(); if (!body || S.busy) return;
+    const row = { post_id: f.dataset.id, user_id: S.me.id, body };
+    if (v3() && S.replyTo && S.replyTo.post === f.dataset.id) row.parent_id = S.replyTo.id;
+    S.busy = true;
+    try {
+      await q(sb.from('comments').insert(row));
+      S.replyTo = null; S.cdraft = null;
+      await loadPost(f.dataset.id); render(true);
+    } catch (e) { fail(e); }
+    S.busy = false;
   },
   async editProfile() {
     const target = parseFloat($('#ep-target').value);
     const patch = { name: $('#ep-name').value.trim(), bio: $('#ep-bio').value.trim(), tags: S.epTags || S.me.tags, goal_label: $('#ep-goal').value.trim(), goal_ex: $('#ep-goalex').value || null, goal_target: isFinite(target) ? target : null };
     try {
       const rows = await q(sb.from('profiles').update(patch).eq('id', S.me.id).select());
-      S.me = rows[0]; S.profiles[S.me.id] = S.me; toast('Profile saved'); S.stack = []; go('me');
+      S.me = rows[0]; S.profiles[S.me.id] = S.me; S.epDraft = null; toast('Profile saved'); S.stack = []; go('me');
     } catch (e) { fail(e); }
   }
 };
@@ -1274,6 +1400,7 @@ document.addEventListener('input', ev => {
   }
   else if (t.id === 'exq' && S.sheet) { S.sheet.q = t.value; const list = $('#exlist'); if (list) list.innerHTML = exListHtml(t.value); }
   else if (t.id === 'nxname' && S.sheet) { S.sheet.name = t.value; }
+  else if (t.id === 'cmt') { const f = t.closest('form'); S.cdraft = { post: f.dataset.id, text: t.value }; }
   else if (t.id === 'ccap' && S.sheet) { S.sheet.caption = t.value; const w = $('#cwarn'); if (w) w.hidden = !OFFTOPIC.test(t.value); }
 });
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet && !S.busy) { S.sheet = null; render(true); } });

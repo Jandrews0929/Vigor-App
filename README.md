@@ -31,6 +31,7 @@ When a release changes `supabase/schema.sql`, re-run the whole file in SQL Edito
 | --- | --- |
 | 1 | Accounts, posts, workouts, reactions, comments, reports, feedback, invites |
 | 2 (app 0.1.2) | Likes, warm-up and drop sets, member-created exercises |
+| 3 (app 0.1.3) | Profile photos, comment replies, thumbs up and down on comments |
 
 ## Member-created exercises
 
