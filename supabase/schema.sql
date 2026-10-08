@@ -51,7 +51,7 @@ create index if not exists sets_workout_idx on public.sets(workout_id);
 create table if not exists public.posts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade default auth.uid(),
-  category text not null check (category in ('Workout','PR','Progress','Nutrition','Recovery','Mental health','Tip')),
+  category text not null check (category in ('Workout','PR','Cardio','Progress','Nutrition','Recovery','Mental health','Tip')),
   caption text not null default '' check (char_length(caption) <= 2000),
   media_path text,
   media_kind text check (media_kind in ('photo','video')),
@@ -140,6 +140,36 @@ create table if not exists public.comment_votes (
   created_at timestamptz not null default now(),
   primary key (comment_id, user_id)
 );
+
+-- ---------- v4: cardio (typed in, or imported from Apple Health / Health Connect) ----------
+alter table public.posts drop constraint if exists posts_category_check;
+alter table public.posts add constraint posts_category_check
+  check (category in ('Workout','PR','Cardio','Progress','Nutrition','Recovery','Mental health','Tip'));
+
+create table if not exists public.activities (
+  id uuid primary key default gen_random_uuid(),
+  workout_id uuid not null references public.workouts(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade default auth.uid(),
+  kind text not null check (kind in ('run','walk','hike','ride','swim','row','other')),
+  idx int not null default 0,
+  title text not null default '' check (char_length(title) <= 80),
+  started_at timestamptz not null default now(),
+  duration_s int not null check (duration_s > 0 and duration_s < 172800),
+  distance_m numeric check (distance_m is null or (distance_m >= 0 and distance_m < 1000000)),
+  elevation_m numeric check (elevation_m is null or (elevation_m >= 0 and elevation_m < 20000)),
+  avg_hr int check (avg_hr is null or avg_hr between 30 and 250),
+  calories int check (calories is null or calories between 0 and 20000),
+  effort smallint check (effort is null or effort between 1 and 5),
+  is_pr boolean not null default false,
+  pr_types text[] not null default '{}',
+  source text not null default 'manual' check (source in ('manual','apple_health','health_connect','garmin','file')),
+  external_id text check (external_id is null or char_length(external_id) <= 200),
+  created_at timestamptz not null default now()
+);
+create index if not exists activities_user_idx on public.activities(user_id, kind, started_at);
+create index if not exists activities_workout_idx on public.activities(workout_id);
+-- the same Apple Health or Health Connect workout can only be imported once per person
+create unique index if not exists activities_external_idx on public.activities(user_id, source, external_id) where external_id is not null;
 
 -- ---------- Helpers ----------
 create or replace function public.is_member() returns boolean
@@ -292,7 +322,7 @@ end;
 $$;
 
 -- Lets the app check which version of this file the database has.
-create or replace function public.vigor_schema_version() returns int language sql immutable as $$ select 3 $$;
+create or replace function public.vigor_schema_version() returns int language sql immutable as $$ select 4 $$;
 
 -- ---------- Row level security ----------
 alter table public.profiles enable row level security;
@@ -307,10 +337,11 @@ alter table public.reports enable row level security;
 alter table public.feedback enable row level security;
 alter table public.exercises enable row level security;
 alter table public.comment_votes enable row level security;
+alter table public.activities enable row level security;
 
 do $$ declare r record; begin
   for r in select policyname, tablename from pg_policies where schemaname = 'public'
-    and tablename in ('profiles','app_settings','workouts','sets','posts','follows','reactions','comments','reports','feedback','exercises','comment_votes')
+    and tablename in ('profiles','app_settings','workouts','sets','posts','follows','reactions','comments','reports','feedback','exercises','comment_votes','activities')
   loop execute format('drop policy %I on public.%I', r.policyname, r.tablename); end loop;
 end $$;
 
@@ -343,6 +374,10 @@ create policy "unreact" on public.reactions for delete to authenticated using (u
 create policy "members read comments" on public.comments for select to authenticated using (public.is_member());
 create policy "comment" on public.comments for insert to authenticated with check (user_id = auth.uid() and public.is_member());
 create policy "delete comment" on public.comments for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+create policy "members read activities" on public.activities for select to authenticated using (public.is_member());
+create policy "add own activities" on public.activities for insert to authenticated with check (user_id = auth.uid() and public.is_member());
+create policy "delete own activities" on public.activities for delete to authenticated using (user_id = auth.uid());
 
 create policy "members read comment votes" on public.comment_votes for select to authenticated using (public.is_member());
 create policy "vote on comments" on public.comment_votes for insert to authenticated with check (user_id = auth.uid() and public.is_member());

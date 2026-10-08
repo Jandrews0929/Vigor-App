@@ -418,3 +418,21 @@ img.av { object-fit: cover; background: var(--raise); }
 .vote.down[aria-pressed="true"] { color: var(--ink); }
 .replying { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); padding: 2px 4px 2px 12px; background: var(--raise); border-radius: 10px; margin-bottom: -4px; }
 .replying b { color: var(--ink); font-weight: 600; }
+
+/* ---------- v0.1.4: cardio ---------- */
+.cblock { gap: 10px; padding-bottom: 14px; }
+.cgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cfield { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.cfield input { width: 100%; min-width: 0; border: 0; background: var(--raise); border-radius: 8px; padding: 8px 10px; font-size: 16px; font-weight: 600; color: var(--ink); letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
+.cfield input::placeholder { font-weight: 500; color: var(--muted); opacity: .7; }
+.hms { display: flex; align-items: center; gap: 2px; }
+.hms input { text-align: center; padding-inline: 2px; }
+.hms i { font-style: normal; font-size: 15px; color: var(--muted); }
+.cpace { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-height: 19px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cpace b { font-weight: 700; }
+.cpace .pr { font-size: 11px; font-weight: 700; letter-spacing: .03em; color: var(--pr); }
+.cpace .muted { color: var(--muted); }
+.effort { display: flex; flex-direction: column; gap: 6px; }
+.plate-val.long { font-size: 21px; }
+.wk li.cardio-li { flex-wrap: wrap; row-gap: 0; }
+[data-act="healthImport"] svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; vertical-align: -4px; }

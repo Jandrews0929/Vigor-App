@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Vigor",
+    "slug": "vigor",
+    "scheme": "vigor",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "com.jandrews0929.vigor",
+      "buildNumber": "1",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Vigor uses the camera when you take a photo or video for a post.",
+        "NSMicrophoneUsageDescription": "Vigor records sound when you film a video for a post.",
+        "NSPhotoLibraryUsageDescription": "Vigor opens your photo library when you add a photo or video to a post.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.jandrews0929.vigor",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#121915",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.health.READ_EXERCISE",
+        "android.permission.health.READ_DISTANCE",
+        "android.permission.health.READ_ELEVATION_GAINED",
+        "android.permission.health.READ_HEART_RATE",
+        "android.permission.health.READ_TOTAL_CALORIES_BURNED"
+      ],
+      "predictiveBackGestureEnabled": false,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
+    },
+    "plugins": [
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "Vigor reads the workouts in Apple Health that you choose to import, so your runs, walks, hikes, rides and swims show up in your Vigor log. Vigor never changes your Health data.",
+          "NSHealthUpdateUsageDescription": false,
+          "background": false
+        }
+      ],
+      "react-native-health-connect",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36,
+            "minSdkVersion": 26
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 140,
+          "backgroundColor": "#121915"
+        }
+      ]
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 /* Vigor trial app. Plain JavaScript, no build step. Data lives in Supabase (see supabase/schema.sql). */
 'use strict';
 
-const VERSION = '0.1.3';
+const VERSION = '0.1.4';
 const CFG = window.VIGOR_CONFIG || {};
 
 /* ---------- Exercise library ----------
@@ -99,7 +99,86 @@ const TEMPLATES = [
 const POST_CATS = ['Progress', 'Nutrition', 'Recovery', 'Mental health', 'Tip'];
 const FOCUS = ['Powerlifting', 'Bodybuilding', 'Hybrid', 'Running', 'Calisthenics', 'CrossFit', 'Yoga', 'Mobility', 'Nutrition', 'Coaching', 'General fitness'];
 const REACTS = [['strong', 'Strong'], ['form', 'Clean form'], ['inspired', 'Inspired']];
-const ECATS = [['All', null], ['Strength', ['Workout', 'PR']], ['Progress', ['Progress']], ['Recovery', ['Recovery']], ['Nutrition', ['Nutrition']], ['Mind', ['Mental health']], ['Tips', ['Tip']]];
+const ECATS = [['All', null], ['Strength', ['Workout', 'PR']], ['Cardio', ['Cardio']], ['Progress', ['Progress']], ['Recovery', ['Recovery']], ['Nutrition', ['Nutrition']], ['Mind', ['Mental health']], ['Tips', ['Tip']]];
+/* ---------- Cardio ----------
+   Stored in meters and seconds; shown in miles and feet (yards for swims, meters for rowing). */
+const MI = 1609.344, YD = 0.9144, FT = 0.3048;
+const CARDIO = {
+  run: { label: 'Run', unit: 'mi', per: 'mi', color: 'red', elev: true },
+  walk: { label: 'Walk', unit: 'mi', per: 'mi', color: 'green', elev: true },
+  hike: { label: 'Hike', unit: 'mi', per: 'mi', color: 'green', elev: true, trail: true },
+  ride: { label: 'Ride', unit: 'mi', speed: true, color: 'blue', elev: true },
+  swim: { label: 'Swim', unit: 'yd', per: '100yd', color: 'blue' },
+  row: { label: 'Row', unit: 'm', per: '500m', color: 'yellow' },
+  other: { label: 'Other cardio', unit: 'mi', color: 'yellow' }
+};
+const UNIT_M = { mi: MI, yd: YD, m: 1 };
+const PER_M = { mi: MI, '100yd': 100 * YD, '500m': 500 };
+const EFFORT = ['Easy', 'Steady', 'Hard', 'Very hard', 'All out'];
+// Run distances that get a "fastest" PR. A longer run counts at its average pace, which never flatters it.
+const RUN_MARKS = [['Fastest mile', MI], ['Fastest 5K', 5000], ['Fastest 10K', 10000], ['Fastest half marathon', 21097.5]];
+const cLabel = k => (CARDIO[k] || CARDIO.other).label;
+function fmtDur(sec) {
+  sec = Math.round(sec); const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, x = sec % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0');
+}
+function fmtDist(kind, meters) {
+  const u = (CARDIO[kind] || CARDIO.other).unit; const v = meters / UNIT_M[u];
+  return (u === 'mi' ? (v >= 100 ? Math.round(v) : +v.toFixed(2)) : Math.round(v).toLocaleString('en-US')) + ' ' + u;
+}
+function fmtPace(kind, meters, sec) {
+  const c = CARDIO[kind] || CARDIO.other;
+  if (!(meters > 0) || !(sec > 0)) return '';
+  if (c.speed) return (meters / MI / (sec / 3600)).toFixed(1) + ' mph';
+  if (!c.per) return '';
+  return fmtDur(sec / (meters / PER_M[c.per])) + ' /' + c.per;
+}
+const fmtFt = m => Math.round(m / FT).toLocaleString('en-US') + ' ft';
+// One activity's stats in the order the plan lists them: distance, time, pace, elevation, heart rate.
+function cardioStats(a) {
+  return [a.distance_m > 0 ? fmtDist(a.kind, a.distance_m) : '', fmtDur(a.duration_s), fmtPace(a.kind, a.distance_m, a.duration_s),
+    a.elevation_m > 0 ? fmtFt(a.elevation_m) + ' up' : '', a.avg_hr ? '♥ ' + a.avg_hr : ''].filter(Boolean);
+}
+// Value shown on a cardio PR badge or plate.
+function cardioPr(a, type) {
+  const mark = RUN_MARKS.find(m => m[0] === type);
+  if (mark) return { val: fmtDur(a.duration_s * mark[1] / a.distance_m), unit: type.replace('Fastest ', ''), score: -a.duration_s * mark[1] / a.distance_m };
+  if (type === 'Biggest elevation day') return { val: Math.round(a.elevation_m / FT).toLocaleString('en-US'), unit: 'ft', score: +a.elevation_m };
+  return { val: String(+(a.distance_m / MI).toFixed(1)), unit: 'mi', score: +a.distance_m };
+}
+// PRs for one finished activity against the person's earlier ones. Like lifts, a first effort sets the baseline.
+function detectCardio(a, hist) {
+  const out = []; const same = hist.filter(h => h.kind === a.kind);
+  if (a.kind === 'run' && a.distance_m > 0) {
+    RUN_MARKS.forEach(([t, d]) => {
+      if (a.distance_m < d * 0.99) return;
+      const prev = same.filter(h => h.distance_m >= d * 0.99).map(h => h.duration_s * d / h.distance_m);
+      if (prev.length && a.duration_s * d / a.distance_m < Math.min(...prev) - 0.5) out.push(t);
+    });
+  }
+  if ((a.kind === 'run' || a.kind === 'hike') && a.distance_m > 0 && same.length && a.distance_m > Math.max(...same.map(h => +h.distance_m || 0)) + 1) out.push(a.kind === 'run' ? 'Longest run' : 'Longest hike');
+  const climbs = hist.filter(h => CARDIO[h.kind] && CARDIO[h.kind].elev && h.elevation_m > 0);
+  if (a.elevation_m > 0 && climbs.length && a.elevation_m > Math.max(...climbs.map(h => +h.elevation_m)) + 0.5) out.push('Biggest elevation day');
+  return out;
+}
+// A cardio block in the logger holds what was typed; this turns it into an activity row.
+function blockToActivity(c) {
+  const u = (CARDIO[c.kind] || CARDIO.other).unit;
+  const dur = (+c.h || 0) * 3600 + (+c.m || 0) * 60 + (+c.s || 0);
+  return {
+    kind: c.kind, title: (c.title || '').trim().slice(0, 80), duration_s: Math.round(dur),
+    distance_m: c.exact_m && c.dist === c.exact_txt ? +(+c.exact_m).toFixed(1) : +c.dist > 0 ? +(+c.dist * UNIT_M[u]).toFixed(1) : null,
+    elevation_m: c.exact_e && c.elev === c.exact_etxt ? +(+c.exact_e).toFixed(1) : +c.elev > 0 ? +(+c.elev * FT).toFixed(1) : null,
+    avg_hr: +c.hr >= 30 && +c.hr <= 250 ? Math.round(+c.hr) : null,
+    calories: c.calories ? Math.round(c.calories) : null, effort: c.effort || null,
+    source: c.source || 'manual', external_id: c.external_id || null, started_at: c.started_at || null
+  };
+}
+const dayPart = d => { const h = d.getHours(); return h < 5 ? 'Night' : h < 12 ? 'Morning' : h < 17 ? 'Afternoon' : h < 21 ? 'Evening' : 'Night'; };
+const CARDIO_HINT = {
+  run: 'Pace, plus fastest mile, 5K, 10K and half marathon PRs', walk: 'Distance, time and pace', hike: 'Trail name and elevation gain',
+  ride: 'Distance, time and average speed', swim: 'Yards and pace per 100', row: 'Meters and split per 500', other: 'Elliptical, stairs, a class: time and how it felt'
+};
 const OFFTOPIC = /\b(crypto|bitcoin|nft|forex|election|vote for|giveaway|promo code|dm me|onlyfans|politic\w*)\b/i;
 
 /* ---------- State ---------- */
@@ -110,8 +189,11 @@ const S = {
   schema: 1, // which version of supabase/schema.sql the database has; checked at sign-in
   legacy: false // true until the database has run the v2 schema (likes, set types, custom exercises)
 };
-const NEED_SCHEMA = 3;
+const NEED_SCHEMA = 4;
 const v3 = () => S.schema >= 3; // profile photos, comment replies and comment votes
+const v4 = () => S.schema >= 4; // cardio
+// Set by the Vigor phone app (native/), which loads this same web app and adds Apple Health or Health Connect.
+const NATIVE = () => (window.VigorNative && typeof window.VigorNative.call === 'function' ? window.VigorNative : null);
 let sb = null;
 
 /* ---------- Helpers ---------- */
@@ -194,7 +276,10 @@ async function hydratePosts(posts) {
     q(sb.from('comments').select('post_id').in('post_id', ids)),
     wids.length ? q(sb.from('sets').select(setCols()).in('workout_id', wids).order('idx')) : Promise.resolve([])
   ]);
-  const titles = wids.length ? await q(sb.from('workouts').select('id,title').in('id', wids)) : [];
+  const [titles, acts] = wids.length ? await Promise.all([
+    q(sb.from('workouts').select('id,title').in('id', wids)),
+    v4() ? q(sb.from('activities').select('*').in('workout_id', wids).order('idx')) : Promise.resolve([])
+  ]) : [[], []];
   posts.forEach(p => {
     p.react = { strong: 0, form: 0, inspired: 0, like: 0 }; p.mine = {}; p.likers = [];
     reacts.filter(r => r.post_id === p.id).forEach(r => {
@@ -204,6 +289,7 @@ async function hydratePosts(posts) {
     });
     p.ncomments = comments.filter(c => c.post_id === p.id).length;
     p.sets = sets.filter(s => s.workout_id === p.workout_id);
+    p.acts = acts.filter(a => a.workout_id === p.workout_id);
     const t = titles.find(w => w.id === p.workout_id); p.wtitle = t ? t.title : 'Workout';
   });
   await ensureProfiles([...posts.map(p => p.user_id), ...posts.map(likerShown)]);
@@ -230,18 +316,24 @@ async function loadExplore() {
 async function loadProfile(uid) {
   await Promise.all([loadFollows(), ensureProfiles([uid])]);
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-  const [posts, prs, workouts, monthSets] = await Promise.all([
+  const [posts, prs, workouts, monthSets, cprs] = await Promise.all([
     q(visibleSelect().eq('user_id', uid).order('created_at', { ascending: false }).limit(90)),
     q(sb.from('sets').select('ex,weight,reps,workout_id,created_at').eq('user_id', uid).eq('is_pr', true).order('weight', { ascending: false })),
     q(sb.from('workouts').select('id,started_at').eq('user_id', uid).gte('started_at', new Date(Date.now() - 120 * 86400000).toISOString())),
-    q(noWarm(sb.from('sets').select('weight,reps').eq('user_id', uid).gte('created_at', monthStart.toISOString())))
+    q(noWarm(sb.from('sets').select('weight,reps').eq('user_id', uid).gte('created_at', monthStart.toISOString()))),
+    v4() ? q(sb.from('activities').select('*').eq('user_id', uid).eq('is_pr', true)) : Promise.resolve([])
   ]);
   const best = {};
   prs.forEach(s => { if (!best[s.ex] || +s.weight > +best[s.ex].weight) best[s.ex] = s; });
-  const prWorkouts = Object.values(best).map(s => s.workout_id);
+  // cardio plates: the best activity for each PR type (fastest 5K, longest hike...)
+  const cbest = {};
+  cprs.forEach(a => (a.pr_types || []).forEach(t => { const v = cardioPr(a, t); if (!cbest[t] || v.score > cbest[t].v.score) cbest[t] = { a, v }; }));
+  const ORDER = [...RUN_MARKS.map(m => m[0]), 'Longest run', 'Longest hike', 'Biggest elevation day'];
+  const cardioWall = ORDER.filter(t => cbest[t]).map(t => ({ cardio: true, type: t, kind: cbest[t].a.kind, ...cbest[t].v, workout_id: cbest[t].a.workout_id, created_at: cbest[t].a.started_at }));
+  const prWorkouts = [...Object.values(best), ...cardioWall].map(s => s.workout_id);
   const proof = prWorkouts.length ? await q(sb.from('posts').select('id,workout_id').in('workout_id', prWorkouts).eq('status', 'visible')) : [];
-  const wall = Object.values(best).map(s => ({ ...s, post: (proof.find(p => p.workout_id === s.workout_id) || {}).id }))
-    .sort((a, b) => +b.weight - +a.weight).slice(0, 9);
+  const withPost = x => ({ ...x, post: (proof.find(p => p.workout_id === x.workout_id) || {}).id });
+  const wall = Object.values(best).map(withPost).sort((a, b) => +b.weight - +a.weight).slice(0, 9).concat(cardioWall.map(withPost));
   // week streak: consecutive weeks (Mon start) with at least one workout, counting back from this week
   const weekKey = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.getTime(); };
   const weeks = new Set(workouts.map(w => weekKey(w.started_at)));
@@ -275,6 +367,11 @@ async function loadPost(id) {
     p.history = { ex: pr.ex, points: [...byW.values()].slice(-10) };
   }
   S.data['post:' + id] = p;
+}
+// Every activity this person has logged, for cardio PR checks.
+async function loadCardioHist() {
+  if (S.ahist || !v4()) return;
+  S.ahist = await q(sb.from('activities').select('kind,duration_s,distance_m,elevation_m,source,external_id').eq('user_id', S.me.id));
 }
 async function loadHist(ex) {
   if (S.hist[ex]) return;
@@ -357,7 +454,11 @@ function computePRs() {
     done.forEach(s => { const atW = h.filter(x => +x.weight >= +s.w); if (atW.length && +s.r > Math.max(...atW.map(x => x.reps))) add(s, 'Most reps at ' + wt(e.id, s.w)); });
     found.forEach((types, s) => groups.push({ ex: e.id, w: +s.w, r: +s.r, types, set: s }));
   });
-  return { groups, sets, vol, warm };
+  const cardio = (S.workout.cardio || []).map(c => ({ c, a: blockToActivity(c) })).filter(x => x.a.duration_s > 0);
+  cardio.forEach(x => { x.types = detectCardio(x.a, S.ahist || []); if (x.types.length) groups.push({ cardio: true, ...x }); });
+  // Each cardio PR type gets its own plate on the wall; a lift set with several PR types is one.
+  const prs = groups.reduce((t, g) => t + (g.cardio ? g.types.length : 1), 0);
+  return { groups, sets, vol, warm, cardio, prs };
 }
 
 /* ---------- Rendering: shared pieces ---------- */
@@ -371,17 +472,27 @@ function mediaHtml(p, full) {
       : `<img src="${url}" alt="" loading="lazy">`}</div>`;
   }
   const h = hueOf(p.id); const pr = (p.sets || []).find(s => s.is_pr);
-  const big = pr ? wt(pr.ex, pr.weight) : (p.category === 'Workout' ? (p.wtitle || 'WORKOUT') : p.category);
-  const sub = pr ? `${exName(pr.ex)} · ${pr.reps} rep${pr.reps > 1 ? 's' : ''}` : (p.category === 'Workout' ? `${(p.sets || []).length} sets` : 'Text post');
+  const acts = p.acts || []; const cpr = acts.find(a => a.is_pr); const lead = acts[0];
+  let big = pr ? wt(pr.ex, pr.weight) : (p.category === 'Workout' ? (p.wtitle || 'WORKOUT') : p.category);
+  const ns = (p.sets || []).length;
+  let sub = pr ? `${exName(pr.ex)} · ${pr.reps} rep${pr.reps > 1 ? 's' : ''}` : (p.category === 'Workout' ? [ns ? `${ns} set${ns === 1 ? '' : 's'}` : '', ...acts.map(a => a.distance_m > 0 ? `${fmtDist(a.kind, a.distance_m)} ${cLabel(a.kind).toLowerCase()}` : cLabel(a.kind))].filter(Boolean).join(' · ') : 'Text post');
+  if (!pr && cpr) { const v = cardioPr(cpr, cpr.pr_types[0]); big = v.val + (v.unit === 'mi' || v.unit === 'ft' ? ' ' + v.unit : ''); sub = `${cpr.pr_types[0]} · ${cLabel(cpr.kind)}`; }
+  else if (!pr && lead && !(p.sets || []).length) {
+    big = lead.distance_m > 0 ? fmtDist(lead.kind, lead.distance_m) : fmtDur(lead.duration_s);
+    sub = [cLabel(lead.kind), lead.title, lead.distance_m > 0 ? fmtDur(lead.duration_s) : ''].filter(Boolean).join(' · ');
+  }
   return `<div class="media"${dbl}><div class="art" style="background:linear-gradient(160deg,hsl(${h} 45% 20%),hsl(${(h + 25) % 360} 55% 34%))">
     <span class="big">${esc(String(big).toUpperCase())}</span><span class="small">${esc(sub.toUpperCase())}</span></div></div>`;
 }
 const KIND_TAG = { warmup: 'W', drop: 'D' };
 function workoutSummary(p, full) {
-  if (!p.sets || !p.sets.length) return '';
+  const acts = p.acts || [];
+  if ((!p.sets || !p.sets.length) && !acts.length) return '';
   const byEx = [];
   p.sets.forEach(s => { let g = byEx.find(x => x.ex === s.ex); if (!g) byEx.push(g = { ex: s.ex, sets: [] }); g.sets.push(s); });
-  return `<div class="wk"><h4>${esc(p.wtitle)}<span>${byEx.length} exercise${byEx.length > 1 ? 's' : ''}</span></h4><ul>${byEx.map(g => {
+  const count = [byEx.length ? `${byEx.length} exercise${byEx.length > 1 ? 's' : ''}` : '', acts.length ? `${acts.length} cardio` : ''].filter(Boolean).join(' · ');
+  return `<div class="wk"><h4>${esc(p.wtitle)}<span>${count}</span></h4><ul>${acts.map(a => `<li class="cardio-li"><b>${esc(cLabel(a.kind))}${a.title ? ' · ' + esc(a.title) : ''}</b>
+      <span class="cstats">${cardioStats(a).map(esc).join(' · ')}${full && a.effort ? ' · felt ' + esc(EFFORT[a.effort - 1].toLowerCase()) : ''}</span></li>`).join('')}${byEx.map(g => {
     const work = g.sets.filter(s => s.kind !== 'warmup'); const nw = g.sets.length - work.length;
     const top = (work.length ? work : g.sets).reduce((a, s) => (+s.weight > +a.weight ? s : a), (work.length ? work : g.sets)[0]);
     const count = `${work.length} set${work.length === 1 ? '' : 's'}${nw ? ` + ${nw} warm-up` : ''}`;
@@ -401,7 +512,8 @@ function likedBy(p) {
 function postCard(p, full) {
   const U = S.profiles[p.user_id] || {};
   const prs = (p.sets || []).filter(s => s.is_pr);
-  const media = (p.media_path || p.sets.length || !full) ? (full ? mediaHtml(p, true)
+  const cprs = (p.acts || []).filter(a => a.is_pr);
+  const media = (p.media_path || p.sets.length || (p.acts || []).length || !full) ? (full ? mediaHtml(p, true)
     : `<button class="media-btn" data-act="open" data-id="${p.id}" ${S.legacy ? '' : 'data-dbl="1"'} aria-label="Open post. Double-tap to like.">${mediaHtml(p)}</button>`) : '';
   return `<article class="post">
     <div class="post-head">
@@ -411,7 +523,8 @@ function postCard(p, full) {
     </div>
     ${p.status === 'held' ? '<div class="hint" style="margin-top:0">Held for review. Only you and the moderators can see this post.</div>' : ''}
     ${media}
-    ${prs.length ? `<div class="prs">${prs.map(s => `<span class="pr-badge">${ICON.trophy}${esc(exName(s.ex))} · ${wt(s.ex, s.weight)} × ${s.reps} · ${esc((s.pr_types || [])[0] || 'PR')}</span>`).join('')}</div>` : ''}
+    ${prs.length || cprs.length ? `<div class="prs">${prs.map(s => `<span class="pr-badge">${ICON.trophy}${esc(exName(s.ex))} · ${wt(s.ex, s.weight)} × ${s.reps} · ${esc((s.pr_types || [])[0] || 'PR')}</span>`).join('')}${
+      cprs.map(a => a.pr_types.map(t => { const v = cardioPr(a, t); return `<span class="pr-badge">${ICON.trophy}${esc(t)} · ${esc(v.val)} ${v.unit === 'mi' || v.unit === 'ft' ? esc(v.unit) : ''}</span>`; }).join('')).join('')}</div>` : ''}
     <div class="react-row">
       ${S.legacy ? '' : `<button class="like-btn" data-act="like" data-id="${p.id}" aria-pressed="${!!p.mine.like}" aria-label="${p.mine.like ? 'Unlike' : 'Like'}">${ICON.heart}<span class="n">${p.react.like ? fmtCount(p.react.like) : ''}</span></button>`}
       ${REACTS.map(([k, l]) => `<button class="react" data-act="react" data-id="${p.id}" data-k="${k}" aria-pressed="${!!p.mine[k]}">${l}<span class="n">${p.react[k]}</span></button>`).join('')}
@@ -482,7 +595,7 @@ function onboardScreen() {
 }
 function installNotice() {
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  if (standalone || store.get('vigor.installDismissed', false)) return '';
+  if (standalone || NATIVE() || store.get('vigor.installDismissed', false)) return '';
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   return `<div class="notice"><b>Add Vigor to your home screen</b>
     <span>${ios ? 'In Safari, tap the Share button, then "Add to Home Screen". Vigor then opens full screen like any other app.' : (deferredInstall ? 'Install Vigor so it opens full screen like any other app.' : 'Open your browser menu and choose "Install app" or "Add to Home screen".')}</span>
@@ -490,8 +603,9 @@ function installNotice() {
 }
 function schemaNotice() {
   if (S.schema >= NEED_SCHEMA || !S.me.is_admin) return '';
-  const off = S.schema < 2 ? 'likes, warm-up and drop sets, new exercises, profile photos, and comment replies and votes' : 'profile photos, and comment replies and votes';
-  return `<div class="notice warnbox"><b>Database update needed</b><span>This version of Vigor needs the latest supabase/schema.sql. Open Supabase, go to SQL Editor, paste the whole file and press Run. Until then ${off} are turned off.</span></div>`;
+  const missing = [S.schema < 2 && 'likes, warm-up and drop sets, new exercises', S.schema < 3 && 'profile photos, comment replies and votes', S.schema < 4 && 'cardio logging and Health imports'].filter(Boolean);
+  const off = missing.length > 1 ? missing.slice(0, -1).join(', ') + ', and ' + missing[missing.length - 1] : missing[0];
+  return `<div class="notice warnbox"><b>Database update needed</b><span>This version of Vigor needs the latest supabase/schema.sql. Open Supabase, go to SQL Editor, paste the whole file and press Run. Until then these are turned off: ${off}.</span></div>`;
 }
 function feedScreen() {
   const list = S.data.feed;
@@ -518,7 +632,10 @@ function exploreScreen() {
     <div id="psearch-results">${searchResultsHtml()}</div>`;
   if (!S.data.explore) return head + `<div id="explore-body" ${S.pq.trim() ? 'hidden' : ''}>${loading()}</div>`;
   const cat = ECATS.find(c => c[0] === S.ecat)[1];
-  let list = S.data.explore.filter(p => !cat || cat.includes(p.category));
+  const hasActs = p => (p.acts || []).length, hasSets = p => (p.sets || []).length;
+  // Cardio holds anything with a run, ride or swim in it (cardio PRs too); Strength holds workouts and PRs with sets.
+  const inCat = p => !cat || (S.ecat === 'Cardio' ? p.category === 'Cardio' || hasActs(p) : cat.includes(p.category) && (S.ecat !== 'Strength' || hasSets(p) || !hasActs(p)));
+  let list = S.data.explore.filter(inCat);
   list = S.esort === 'new' ? list : [...list].sort((a, b) => score(b) - score(a));
   const creators = S.data.creators.filter(u => !iFollow(u));
   return head + `<div id="explore-body" ${S.pq.trim() ? 'hidden' : ''}>` + (creators.length ? `<div class="ex-sub label" style="padding-bottom:8px">People to follow</div>
@@ -594,7 +711,7 @@ function profileScreen(u) {
   const head = topBar(h2(U ? '@' + U.handle : 'Profile'), right, !mine);
   if (!U || !d) return head + loading();
   const filters = ['All', 'Workouts', 'Progress', 'Nutrition', 'Tips'];
-  const match = p => S.gridFilter === 'All' || (S.gridFilter === 'Workouts' && (p.category === 'Workout' || p.category === 'PR')) ||
+  const match = p => S.gridFilter === 'All' || (S.gridFilter === 'Workouts' && ['Workout', 'PR', 'Cardio'].includes(p.category)) ||
     (S.gridFilter === 'Progress' && p.category === 'Progress') || (S.gridFilter === 'Nutrition' && p.category === 'Nutrition') || (S.gridFilter === 'Tips' && p.category === 'Tip');
   const shown = d.posts.filter(match);
   let goal = '';
@@ -615,11 +732,12 @@ function profileScreen(u) {
       <div class="stats"><div><b>${d.streak}</b><span>week streak</span></div><div><b>${d.month}</b><span>workouts this month</span></div><div><b>${d.volume >= 10000 ? Math.round(d.volume / 1000) + 'k' : num(d.volume)}</b><span>lb this month</span></div></div>
     </section>
     <section class="wall"><div class="wall-head"><h3>PR wall</h3><span>${d.wall.length ? 'Tap a plate for its proof' : ''}</span></div>
-      ${d.wall.length ? `<div class="plates">${d.wall.map(x => `<button class="plate-tile" data-act="${x.post ? 'open' : 'noproof'}" data-id="${x.post || x.ex}">
-          <span class="plate c-${exColor(x.ex)}"><span class="plate-val">${wt(x.ex, x.weight)}</span><span class="plate-unit">lb × ${x.reps}</span></span>
-          <span class="plate-name">${esc(exName(x.ex))}</span>
+      ${d.wall.length ? `<div class="plates">${d.wall.map(x => `<button class="plate-tile" data-act="${x.post ? 'open' : 'noproof'}" data-id="${esc(x.post || (x.cardio ? x.type : x.ex))}">
+          ${x.cardio ? `<span class="plate c-${CARDIO[x.kind].color}"><span class="plate-val ${x.val.length > 5 ? 'long' : ''}">${esc(x.val)}</span><span class="plate-unit">${esc(x.unit)}</span></span>
+          <span class="plate-name">${esc(x.type)}</span>` : `<span class="plate c-${exColor(x.ex)}"><span class="plate-val">${wt(x.ex, x.weight)}</span><span class="plate-unit">lb × ${x.reps}</span></span>
+          <span class="plate-name">${esc(exName(x.ex))}</span>`}
           ${x.post ? `<span class="plate-meta">▶ Proof · ${shortDate(x.created_at)}</span>` : `<span class="plate-meta none">No proof yet · ${shortDate(x.created_at)}</span>`}
-        </button>`).join('')}</div>` : `<div class="empty" style="padding:8px">${mine ? 'Log a lift twice and beat it to earn your first PR plate.' : 'No PRs yet.'}</div>`}
+        </button>`).join('')}</div>` : `<div class="empty" style="padding:8px">${mine ? 'Log a lift or a run twice and beat it to earn your first PR plate.' : 'No PRs yet.'}</div>`}
     </section>
     <div class="chips">${filters.map(f => `<button class="chip" data-act="gridf" data-id="${f}" aria-pressed="${S.gridFilter === f}">${f}</button>`).join('')}</div>
     ${shown.length ? `<div class="grid">${shown.map(p => `<button data-act="open" data-id="${p.id}" aria-label="Open ${esc(p.category)} post">${mediaHtml(p)}</button>`).join('')}</div>` : '<div class="empty">Nothing here yet.</div>'}
@@ -691,6 +809,8 @@ function logScreen() {
     const mine = store.get('vigor.templates', []);
     return topBar(h2('Log a workout'), fbBtn()) + `<div class="templates">
       <button class="btn primary block" data-act="startEmpty">Start an empty workout</button>
+      ${v4() ? '<button class="btn block" data-act="startCardio">Log a run, walk, hike, ride or swim</button>' : ''}
+      ${v4() && NATIVE() ? `<button class="btn block" data-act="healthImport">${ICON.heart}Import from ${esc(NATIVE().healthName)}</button>` : ''}
       <span class="label" style="margin-top:8px">Templates</span>
       ${[...mine.map((t, i) => ({ ...t, key: 'm' + i })), ...TEMPLATES.map((t, i) => ({ ...t, key: 'b' + i }))].map(t => `<button class="tpl" data-act="startTpl" data-id="${t.key}">
         <span class="tpl-top"><h4>${esc(t.name)}</h4>${t.from ? `<span class="from">From ${esc(t.from)}</span>` : ''}</span>
@@ -699,7 +819,7 @@ function logScreen() {
     </div>`;
   }
   return `<header class="top"><input class="title-input" id="wtitle" value="${esc(w.title)}" aria-label="Workout name" maxlength="60"><span class="timer" id="elapsed">${elapsed()}</span><button class="btn primary sm" data-act="finish">Finish</button></header>
-    ${!w.ex.length ? '<div class="empty">Add your first exercise to start logging.</div>' : ''}
+    ${!w.ex.length && !(w.cardio || []).length ? `<div class="empty">Add your first exercise${v4() ? ' or cardio' : ''} to start logging.</div>` : ''}
     ${w.ex.map((e, i) => {
       const h = S.hist[e.id] || []; const last = h[h.length - 1];
       const best = h.length ? h.reduce((a, s) => (+s.weight > +a.weight ? s : a), h[0]) : null;
@@ -714,7 +834,39 @@ function logScreen() {
         </tbody></table>
         <button class="add-set" data-act="addSet" data-ex="${i}">+ Add set</button></section>`;
     }).join('')}
-    <div class="log-foot">${w.ex.length ? '<p class="when" style="padding:0">Tap a set number to mark it as a warm-up (W) or drop set (D). Warm-ups never count toward PRs.</p>' : ''}<button class="btn block" data-act="addEx">+ Add exercise</button><button class="btn danger block" data-act="discard">Discard workout</button></div>`;
+    ${(w.cardio || []).map(cardioBlock).join('')}
+    <div class="log-foot">${w.ex.length ? '<p class="when" style="padding:0">Tap a set number to mark it as a warm-up (W) or drop set (D). Warm-ups never count toward PRs.</p>' : ''}<button class="btn block" data-act="addEx">+ Add exercise</button>
+      ${v4() ? '<button class="btn block" data-act="startCardio">+ Add cardio</button>' : ''}
+      ${v4() && NATIVE() && !w.imported ? `<button class="btn block" data-act="healthImport">+ Import from ${esc(NATIVE().healthName)}</button>` : ''}
+      <button class="btn danger block" data-act="discard">Discard workout</button></div>`;
+}
+const SOURCE_NAME = { apple_health: 'Apple Health', health_connect: 'Health Connect', garmin: 'Garmin', file: 'a file' };
+function cardioBlock(c, i) {
+  const k = CARDIO[c.kind] || CARDIO.other;
+  const same = (S.ahist || []).filter(h => h.kind === c.kind && h.distance_m > 0);
+  const longest = same.length ? same.reduce((a, h) => (+h.distance_m > +a.distance_m ? h : a), same[0]) : null;
+  const note = SOURCE_NAME[c.source] ? 'From ' + SOURCE_NAME[c.source] : longest ? `Longest ${fmtDist(c.kind, longest.distance_m)}` : `First ${k.label.toLowerCase()}: sets your baseline`;
+  const inp = (f, mode, label, extra = '') => `<input data-c="${i}" data-cf="${f}" inputmode="${mode}" value="${esc(c[f] || '')}" aria-label="${label}" ${extra}>`;
+  return `<section class="exblock cblock"><div class="exblock-head"><h3>${esc(k.label)}</h3><span class="best">${esc(note)}</span>
+      <button class="text-btn" data-act="rmCardio" data-c="${i}" style="color:var(--muted)">Remove</button></div>
+    ${k.trail || c.kind === 'other' ? `<label class="cfield">${k.trail ? 'Trail name' : 'What was it?'}<input data-c="${i}" data-cf="title" value="${esc(c.title || '')}" maxlength="80" placeholder="${k.trail ? 'Optional' : 'Rowing class, elliptical…'}"></label>` : ''}
+    <div class="cgrid">
+      <label class="cfield">Distance (${k.unit})${inp('dist', 'decimal', 'Distance in ' + k.unit, 'placeholder="0"')}</label>
+      <div class="cfield"><span>Time</span><div class="hms">${inp('h', 'numeric', 'Hours', 'placeholder="h" maxlength="2"')}<i>:</i>${inp('m', 'numeric', 'Minutes', 'placeholder="min" maxlength="3"')}<i>:</i>${inp('s', 'numeric', 'Seconds', 'placeholder="sec" maxlength="2"')}</div></div>
+      ${k.elev ? `<label class="cfield">Elevation gain (ft)${inp('elev', 'numeric', 'Elevation gain in feet', 'placeholder="Optional"')}</label>` : ''}
+      <label class="cfield">Avg heart rate${inp('hr', 'numeric', 'Average heart rate', 'placeholder="Optional" maxlength="3"')}</label>
+    </div>
+    <div class="cpace" id="cp-${i}">${cardioLive(c)}</div>
+    <div class="effort"><span class="label">How it felt</span><div class="tagpick">${EFFORT.map((l, n) => `<button class="chip" data-act="cEffort" data-c="${i}" data-id="${n + 1}" aria-pressed="${c.effort === n + 1}">${l}</button>`).join('')}</div></div>
+  </section>`;
+}
+// Pace (or speed) under a cardio block, plus any PR it would set, updated as you type.
+function cardioLive(c) {
+  const a = blockToActivity(c);
+  if (!a.duration_s) return '<span class="muted">Enter the time to log this one.</span>';
+  const pace = fmtPace(c.kind, a.distance_m, a.duration_s);
+  return (pace ? `<span>${CARDIO[c.kind] && CARDIO[c.kind].speed ? 'Avg speed' : 'Pace'} <b>${pace}</b></span>` : '') +
+    detectCardio(a, S.ahist || []).map(t => `<span class="pr">▲ PR · ${esc(t)}</span>`).join('');
 }
 const KIND_NAME = { normal: 'working set', warmup: 'warm-up', drop: 'drop set' };
 // Warm-ups show W and drop sets D; working sets are numbered 1, 2, 3 without counting either.
@@ -725,25 +877,37 @@ function setLabel(sets, j) {
 }
 function prLive(ex, s) { return s.done && s.kind !== 'warmup' ? detect(ex, s.w, s.r).map(t => `<span>▲ PR · ${esc(t)}</span>`).join('') : ''; }
 function elapsed() {
-  if (!S.workout) return '';
+  if (!S.workout || S.workout.imported) return '';
   const sec = Math.floor((Date.now() - S.workout.started) / 1000);
   const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60;
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec % 60).padStart(2, '0');
 }
 function summaryScreen() {
   const s = S.summary; const w = S.workout;
+  const onlyCardio = !s.sets && !s.warm && s.cardio.length;
+  const mins = w.imported || onlyCardio ? s.cardio.reduce((t, x) => t + x.a.duration_s, 0) / 60 : (Date.now() - w.started) / 60000;
+  const facts = [esc(w.title)];
+  if (onlyCardio && s.cardio.length === 1) facts.push(...cardioStats(s.cardio[0].a).slice(0, 3).map(esc));
+  else {
+    facts.push(Math.max(1, Math.round(mins)) + ' min');
+    if (s.sets || s.warm) facts.push(`${s.sets} set${s.sets === 1 ? '' : 's'}${s.warm ? ` + ${s.warm} warm-up` : ''}`, `${num(s.vol)} lb volume`);
+    s.cardio.forEach(x => facts.push(esc([x.a.distance_m > 0 ? fmtDist(x.a.kind, x.a.distance_m) : fmtDur(x.a.duration_s), cLabel(x.a.kind).toLowerCase()].join(' '))));
+  }
+  const liftPr = s.groups.some(g => !g.cardio);
   return `<header class="top"><button class="icon-btn" data-act="unfinish" aria-label="Back to workout">${ICON.back}</button><h2>Share session</h2></header>
-    <div class="done-hero"><h3>${s.groups.length ? `${s.groups.length} new PR${s.groups.length > 1 ? 's' : ''}` : 'Workout logged'}</h3>
-      <p>${esc(w.title)} · ${Math.max(1, Math.round((Date.now() - w.started) / 60000))} min · ${s.sets} set${s.sets === 1 ? '' : 's'}${s.warm ? ` + ${s.warm} warm-up` : ''} · ${num(s.vol)} lb volume</p></div>
-    ${s.groups.length ? `<div class="found">${s.groups.map(g => `<div class="found-item">
+    <div class="done-hero"><h3>${s.prs ? `${s.prs} new PR${s.prs > 1 ? 's' : ''}` : onlyCardio && s.cardio.length === 1 ? cLabel(s.cardio[0].a.kind) + ' logged' : 'Workout logged'}</h3>
+      <p>${facts.join(' · ')}</p></div>
+    ${s.groups.length ? `<div class="found">${s.groups.map(g => g.cardio ? `<div class="found-item">
+        <div class="found-top"><b>${esc(cLabel(g.a.kind))}${g.a.title ? ' · ' + esc(g.a.title) : ''}</b><span>${esc(cardioStats(g.a).slice(0, 2).join(' · '))}</span></div>
+        <div class="types">${g.types.map(t => { const v = cardioPr(g.a, t); return `<span class="pr-badge">${ICON.trophy}${esc(t)} · ${esc(v.val)}${v.unit === 'mi' || v.unit === 'ft' ? ' ' + v.unit : ''}</span>`; }).join('')}</div></div>` : `<div class="found-item">
         <div class="found-top"><b>${esc(exName(g.ex))}</b><span>${wt(g.ex, g.w)} × ${g.r}</span></div>
         <div class="types">${g.types.map(t => `<span class="pr-badge">${ICON.trophy}${esc(t)}</span>`).join('')}</div></div>`).join('')}</div>` : ''}
     <div class="section-pad">
-      <span class="label">${s.groups.length ? 'Proof: photo or video of the PR set' : 'Photo or video (optional)'}</span>
+      <span class="label">${liftPr ? 'Proof: photo or video of the PR set' : s.groups.length ? 'Proof: a photo from it or a screenshot of your watch' : 'Photo or video (optional)'}</span>
       ${s.file ? `${s.file.kind === 'video' ? `<video class="media-preview" src="${s.file.preview}" controls playsinline></video>` : `<img class="media-preview" src="${s.file.preview}" alt="">`}
         <button class="btn sm" data-act="clearMedia">Remove</button>` : '<button class="btn primary" data-act="pickMedia">Add photo or video</button><span class="when" style="padding:0">Videos up to 60 seconds.</span>'}
       <span class="label">Post as</span>
-      <div class="seg">${['PR', 'Workout'].map(c => `<button data-act="sumCat" data-id="${c}" aria-pressed="${s.cat === c}" ${c === 'PR' && !s.groups.length ? 'disabled' : ''}>${c === 'PR' ? 'PR post' : 'Workout post'}</button>`).join('')}</div>
+      <div class="seg">${['PR', onlyCardio ? 'Cardio' : 'Workout'].map(c => `<button data-act="sumCat" data-id="${c}" aria-pressed="${s.cat === c}" ${c === 'PR' && !s.groups.length ? 'disabled' : ''}>${c} post</button>`).join('')}</div>
       <label class="label" for="sumcap">Caption</label>
       <textarea class="field" id="sumcap" maxlength="2000" placeholder="How did it feel?">${esc(s.caption)}</textarea>
       <span class="label">Who sees it</span>
@@ -807,6 +971,19 @@ function sheetHtml() {
       ${[['normal', 'Working set', 'Counts toward PRs and volume.'], ['warmup', 'Warm-up (W)', 'Logged, but never counts toward PRs, history or volume.'], ['drop', 'Drop set (D)', 'A lighter set straight after a working set. Counts like any other set.']]
         .map(([k, l, d]) => `<button class="opt kind-opt" data-act="setKindPick" data-id="${k}" aria-pressed="${cur === k}"><b>${l}</b><span>${d}</span></button>`).join('')}
       <button class="opt" data-act="rmSet" style="color:var(--pr)">Remove this set</button>`;
+  } else if (sh.type === 'cardioKind') {
+    inner = `<h3>Log cardio</h3><p>Type in the distance and time from your watch, treadmill or bike computer.</p>
+      ${Object.entries(CARDIO).map(([k, c]) => `<button class="opt kind-opt" data-act="addCardio" data-id="${k}"><b>${c.label}</b><span>${CARDIO_HINT[k]}</span></button>`).join('')}
+      ${NATIVE() ? `<button class="opt" data-act="healthImport">${ICON.heart} Import from ${esc(NATIVE().healthName)} instead</button>` : ''}`;
+  } else if (sh.type === 'health') {
+    const name = NATIVE() ? NATIVE().healthName : 'Health';
+    const when = x => new Date(x.start).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    inner = `<h3>Import from ${esc(name)}</h3>${sh.err ? `<p class="err">${esc(sh.err)}</p>${sh.code === 'denied' ? `<button class="btn block" data-act="healthSettings">Open ${esc(name)} settings</button>` : ''}<button class="btn block" data-act="healthImport">Try again</button>`
+      : !sh.list ? loading()
+      : sh.list.length ? `<p>Workouts from the last 30 days. Tap one to add it, then check the numbers before you save.</p>
+        <div class="exlist">${sh.list.map((x, i) => `<button data-act="healthPick" data-id="${i}" ${x.done ? 'disabled' : ''}><b>${esc([x.kind === 'other' && x.activityName ? x.activityName : cLabel(x.kind), x.distance_m > 0 ? fmtDist(x.kind, x.distance_m) : fmtDur(x.duration_s)].join(' · '))}</b>
+          <span>${esc([when(x), x.distance_m > 0 ? fmtDur(x.duration_s) : '', x.done ? 'Already in Vigor' : x.sourceName || ''].filter(Boolean).join(' · '))}</span></button>`).join('')}</div>`
+      : `<p>No workouts in ${esc(name)} from the last 30 days.</p>${sh.hint ? `<p>${esc(sh.hint)}</p><button class="btn block" data-act="healthSettings">Open settings</button>` : ''}`}`;
   } else if (sh.type === 'likers') {
     const p = findPost(sh.id);
     inner = `<h3>Likes</h3>${!p ? '' : sh.ready ? `<div class="sheet-people">${[...p.likers].reverse().map(peopleRow).join('')}</div>` : loading()}`;
@@ -831,7 +1008,7 @@ function sheetHtml() {
       <button class="btn primary block" data-act="saveCode">Save code</button>`;
   }
   const anim = lastSheet !== sh; lastSheet = sh;
-  return `<div class="sheet-wrap" data-act="closeSheet"><div class="sheet ${anim ? 'anim' : ''} ${sh.type === 'addEx' ? 'tall' : ''}" role="dialog" aria-modal="true"><span class="grab"></span>${inner}</div></div>`;
+  return `<div class="sheet-wrap" data-act="closeSheet"><div class="sheet ${anim ? 'anim' : ''} ${sh.type === 'addEx' || sh.type === 'health' ? 'tall' : ''}" role="dialog" aria-modal="true"><span class="grab"></span>${inner}</div></div>`;
 }
 function postCopies(id) {
   const out = [];
@@ -901,11 +1078,24 @@ async function show(fn) { render(true); try { await fn(); } catch (e) { fail(e);
 function go(tab) {
   S.tab = tab; S.stack = []; S.sheet = null; S.gridFilter = 'All';
   render();
-  const loaders = { feed: loadFeed, explore: loadExplore, me: () => loadProfile(S.me.id), log: async () => { if (S.workout) await Promise.all(S.workout.ex.map(e => loadHist(e.id))); } };
+  const loaders = { feed: loadFeed, explore: loadExplore, me: () => loadProfile(S.me.id), log: async () => { if (S.workout) await Promise.all([...S.workout.ex.map(e => loadHist(e.id)), (S.workout.cardio || []).length ? loadCardioHist() : null]); } };
   if (loaders[tab]) loaders[tab]().then(() => render(true)).catch(fail);
 }
 function push(entry, loader) { S.stack.push(entry); S.sheet = null; render(); if (loader) loader().then(() => render(true)).catch(fail); }
 function saveWorkout() { store.set('vigor.workout', S.workout); }
+// Adds a cardio block to the open workout, starting one named after the time of day if none is open.
+async function addCardioBlock(block, when, imported, name) {
+  S.sheet = null;
+  const fresh = !S.workout;
+  if (fresh) S.workout = { title: `${dayPart(when)} ${(name || (block.kind === 'other' ? 'cardio' : cLabel(block.kind))).toLowerCase()}`, started: imported ? +when : Date.now(), ex: [], imported };
+  (S.workout.cardio || (S.workout.cardio = [])).push(block);
+  const i = S.workout.cardio.length - 1;
+  saveWorkout(); render(!fresh);
+  try { await loadCardioHist(); } catch (e) { fail(e); }
+  render(true);
+  if (!fresh) window.scrollTo(0, document.body.scrollHeight);
+  if (!imported) { const f = document.querySelector(`[data-c="${i}"][data-cf="dist"]`); if (f) f.focus(); }
+}
 
 /* ---------- Media ---------- */
 const filepick = document.createElement('input');
@@ -1265,10 +1455,49 @@ const A = {
   },
   discard() { S.sheet = { type: 'discard' }; render(true); },
   discardYes() { S.workout = null; S.rest = null; S.sheet = null; saveWorkout(); render(); toast('Workout discarded'); },
-  finish() {
-    if (!S.workout.ex.some(e => e.sets.some(s => s.done))) { toast('Check off at least one set first'); return; }
+  startCardio() { S.sheet = { type: 'cardioKind' }; render(true); },
+  addCardio(kind) { addCardioBlock({ kind }, new Date(), false); },
+  rmCardio(_, el) { S.workout.cardio.splice(+el.dataset.c, 1); saveWorkout(); render(true); },
+  cEffort(id, el) { const c = S.workout.cardio[+el.dataset.c]; c.effort = c.effort === +id ? null : +id; saveWorkout(); render(true); },
+  async healthImport() {
+    const nat = NATIVE(); if (!nat) return;
+    S.sheet = { type: 'health' }; render(true);
+    try {
+      const src = nat.platform === 'ios' ? 'apple_health' : 'health_connect';
+      const [res] = await Promise.all([nat.call('health.workouts', { days: 30 }), loadCardioHist()]);
+      const have = new Set([...(S.ahist || []), ...((S.workout && S.workout.cardio) || [])].filter(h => h.source === src && h.external_id).map(h => h.external_id));
+      const list = (res && res.workouts || []).filter(x => x && x.id && x.duration_s > 0)
+        .map(x => ({ ...x, id: String(x.id), kind: CARDIO[x.kind] ? x.kind : 'other', done: have.has(String(x.id)) }))
+        .sort((a, b) => Date.parse(b.start) - Date.parse(a.start));
+      if (S.sheet && S.sheet.type === 'health') S.sheet = { type: 'health', list, src, hint: res && res.hint };
+    } catch (e) { if (S.sheet && S.sheet.type === 'health') S.sheet = { type: 'health', err: (e && e.message) || 'Could not read your workouts.', code: e && e.code }; }
+    render(true);
+  },
+  healthSettings() { if (NATIVE()) NATIVE().call('health.settings').catch(fail); },
+  healthPick(i) {
+    const sh = S.sheet; const x = sh && sh.list && sh.list[+i]; if (!x || x.done) return;
+    const k = CARDIO[x.kind]; const d = Math.round(x.duration_s);
+    const dist = x.distance_m > 0 ? x.distance_m / UNIT_M[k.unit] : 0;
+    const txt = dist ? String(k.unit === 'mi' ? +dist.toFixed(2) : Math.round(dist)) : '';
+    const elev = x.elevation_m > 0 ? String(Math.round(x.elevation_m / FT)) : '';
+    addCardioBlock({
+      kind: x.kind, title: k.trail || x.kind === 'other' ? String(x.title || (x.kind === 'other' && x.activityName) || '').slice(0, 80) : '',
+      dist: txt, exact_m: x.distance_m > 0 ? x.distance_m : null, exact_txt: txt,
+      h: d >= 3600 ? String(Math.floor(d / 3600)) : '', m: String(Math.floor(d / 60) % 60), s: String(d % 60).padStart(2, '0'),
+      elev, exact_e: elev ? x.elevation_m : null, exact_etxt: elev, hr: x.avg_hr ? String(Math.round(x.avg_hr)) : '',
+      calories: x.calories > 0 ? Math.round(x.calories) : null, source: sh.src, external_id: x.id, started_at: x.start
+    }, new Date(x.start), true, x.kind === 'other' ? x.activityName : '');
+  },
+  async finish() {
+    const w = S.workout; const cardio = (w.cardio || []).map(c => ({ c, a: blockToActivity(c) }));
+    const untimed = cardio.find(x => !x.a.duration_s && (x.a.distance_m || x.a.elevation_m));
+    if (untimed) { toast(`Add the time for your ${cLabel(untimed.a.kind).toLowerCase()} first`); return; }
+    const bad = cardio.find(x => x.a.duration_s >= 172800 || x.a.distance_m >= 1000000 || x.a.elevation_m >= 20000);
+    if (bad) { toast(`Check the numbers on your ${cLabel(bad.a.kind).toLowerCase()}. One of them looks too big.`); return; }
+    if (!w.ex.some(e => e.sets.some(s => s.done)) && !cardio.some(x => x.a.duration_s)) { toast(cardio.length ? 'Enter the time for your cardio first' : 'Check off at least one set first'); return; }
+    try { await loadCardioHist(); } catch (e) { fail(e); return; }
     const r = computePRs();
-    S.summary = { ...r, cat: r.groups.length ? 'PR' : 'Workout', vis: 'public', caption: '', file: null };
+    S.summary = { ...r, cat: r.groups.length ? 'PR' : !r.sets && r.cardio.length ? 'Cardio' : 'Workout', vis: 'public', caption: '', file: null };
     S.rest = null; render();
   },
   unfinish() { S.summary = null; render(); },
@@ -1280,8 +1509,15 @@ const A = {
     if (S.busy) return;
     const s = S.summary, w = S.workout; s.caption = $('#sumcap').value.trim();
     S.busy = true; render(true);
+    let wk = null;
     try {
-      const wk = (await q(sb.from('workouts').insert({ user_id: S.me.id, title: w.title || 'Workout', started_at: new Date(w.started).toISOString(), ended_at: new Date().toISOString() }).select()))[0];
+      // An imported session ends when its activities do. Cardio typed in afterwards ended just now and began its duration ago.
+      const dur = s.cardio.reduce((t, x) => t + x.a.duration_s, 0) * 1000;
+      const cardioOnly = !s.sets && !s.warm && s.cardio.length;
+      const begin = !w.imported && cardioOnly ? Date.now() - dur : w.started;
+      const end = w.imported ? w.started + dur : Date.now();
+      const startIso = new Date(begin).toISOString();
+      wk = (await q(sb.from('workouts').insert({ user_id: S.me.id, title: w.title || 'Workout', started_at: startIso, ended_at: new Date(end).toISOString() }).select()))[0];
       const rows = []; let idx = 0;
       w.ex.forEach(e => e.sets.forEach(x => {
         if (!x.done || !(+x.r > 0)) return;
@@ -1291,17 +1527,24 @@ const A = {
         rows.push(row);
       }));
       if (rows.length) await q(sb.from('sets').insert(rows));
+      const acts = s.cardio.map((x, i) => ({ ...x.a, workout_id: wk.id, user_id: S.me.id, idx: i, started_at: x.a.started_at || startIso, is_pr: !!x.types.length, pr_types: x.types }));
+      if (acts.length && v4()) await q(sb.from('activities').insert(acts));
       let held = false;
       if (s.vis === 'public') {
         const path = s.file ? await upload(s.file) : null;
         const p = await q(sb.from('posts').insert({ user_id: S.me.id, category: s.cat, caption: s.caption, media_path: path, media_kind: s.file ? s.file.kind : null, workout_id: wk.id }).select());
         held = p[0] && p[0].status === 'held';
       }
-      const n = s.groups.length;
-      S.workout = null; S.summary = null; S.rest = null; S.hist = {}; S.busy = false; saveWorkout();
+      const n = s.prs;
+      S.workout = null; S.summary = null; S.rest = null; S.hist = {}; S.ahist = null; S.busy = false; saveWorkout();
       toast(held ? 'Saved. The post is held for review because it looks off-topic.' : s.vis === 'public' ? (n ? `Shared. ${n} PR${n > 1 ? 's' : ''} added to your wall.` : 'Shared') : (n ? `Saved. ${n} PR${n > 1 ? 's' : ''} added to your wall.` : 'Saved to your log'));
       go(n ? 'me' : 'feed');
-    } catch (e) { S.busy = false; render(true); fail(e); }
+    } catch (e) {
+      // Don't leave half a session behind: removing the workout removes its sets and activities too.
+      if (wk) await sb.from('workouts').delete().eq('id', wk.id).then(() => {}, () => {});
+      S.busy = false; render(true);
+      if (e && e.code === '23505') { S.ahist = null; toast('One of these workouts is already in your log, so nothing was saved. Remove it and try again.'); } else fail(e);
+    }
   }
 };
 
@@ -1391,6 +1634,12 @@ document.addEventListener('input', ev => {
     s[t.dataset.f] = t.value.replace(t.dataset.f === 'w' ? /[^\d.]/g : /\D/g, '');
     const box = document.getElementById(`prl-${t.dataset.ex}-${t.dataset.set}`); if (box) box.innerHTML = prLive(e.id, s);
     saveWorkout();
+  } else if (t.dataset.cf && S.workout && S.workout.cardio) {
+    const c = S.workout.cardio[+t.dataset.c]; if (!c) return; const f = t.dataset.cf;
+    if (f === 'title') c.title = t.value;
+    else { const v = f === 'dist' ? t.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1') : t.value.replace(/\D/g, ''); if (v !== t.value) t.value = v; c[f] = v; }
+    const box = document.getElementById('cp-' + t.dataset.c); if (box) box.innerHTML = cardioLive(c);
+    saveWorkout();
   } else if (t.id === 'wtitle' && S.workout) { S.workout.title = t.value; saveWorkout(); }
   else if (t.id === 'psearch') {
     S.pq = t.value; S.presults = null; clearTimeout(searchTimer);
@@ -1403,6 +1652,15 @@ document.addEventListener('input', ev => {
   else if (t.id === 'cmt') { const f = t.closest('form'); S.cdraft = { post: f.dataset.id, text: t.value }; }
   else if (t.id === 'ccap' && S.sheet) { S.sheet.caption = t.value; const w = $('#cwarn'); if (w) w.hidden = !OFFTOPIC.test(t.value); }
 });
+// The phone app's Android back button: close a sheet, then step back, then go to Feed. False lets the app close.
+window.__vigorBack = () => {
+  if (S.view !== 'app') return false;
+  if (S.sheet) { if (!S.busy) { S.sheet = null; render(true); } return true; }
+  if (S.summary) { A.unfinish(); return true; }
+  if (S.stack.length) { A.back(); return true; }
+  if (S.tab !== 'feed') { go('feed'); return true; }
+  return false;
+};
 document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && S.sheet && !S.busy) { S.sheet = null; render(true); } });
 
 let deferredInstall = null;
@@ -1428,7 +1686,7 @@ function start() {
   sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
   sb.auth.onAuthStateChange((event, session) => {
     if (event === 'PASSWORD_RECOVERY') { S.view = 'auth'; S.authMode = 'reset'; S.authMsg = ''; render(); return; }
-    if (event === 'SIGNED_OUT') { S.me = null; S.session = null; S.data = {}; S.profiles = {}; S.view = 'auth'; S.authMode = 'signin'; render(); return; }
+    if (event === 'SIGNED_OUT') { S.me = null; S.session = null; S.data = {}; S.profiles = {}; S.hist = {}; S.ahist = null; S.view = 'auth'; S.authMode = 'signin'; render(); return; }
     if (event === 'SIGNED_IN' && (!S.session || S.session.user.id !== session.user.id)) { setTimeout(boot, 0); }
   });
   boot();
