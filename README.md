@@ -63,6 +63,8 @@ iPhone reads Apple Health (HealthKit, read only). Android reads Health Connect (
 
 Build it with `cd native && npm ci && npx expo prebuild`. Android: `cd android && ./gradlew assembleRelease`. iPhone needs a Mac with Xcode or a cloud build, plus an Apple Developer account. The Android release build is signed with React Native's shared debug key, which is fine for a sideloaded trial; switch to Play App Signing before a Play Store release.
 
+GitHub builds the Android app automatically (`.github/workflows/android.yml`) whenever `native/` changes, or from Actions > Android app > Run workflow. Each run attaches `vigor-android-N.apk` (zipped) to its page under Artifacts for 30 days; download it while signed in to GitHub and send it to testers, who allow installs from unknown apps once.
+
 ## Feedback loop
 
 Every screen has a Feedback button. Feedback lands in the `feedback` table with the screen, app version and device. Admins read it under Profile > Admin and can copy all of it at once to paste into a chat with Claude.
