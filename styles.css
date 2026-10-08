@@ -85,9 +85,10 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .media-btn { display: block; width: 100%; }
 .media { position: relative; width: 100%; aspect-ratio: 4 / 5; max-width: 100%; overflow: hidden; background: #111; }
 .media img, .media video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.art { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 18px; color: #fff; text-align: left; }
+.art { position: absolute; inset: 0; container-type: inline-size; display: flex; flex-direction: column; justify-content: flex-end; padding: 18px; color: #fff; text-align: left; }
 .art::before { content: ""; position: absolute; inset: 0; background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 1px, transparent 1px 28px); }
-.art .big { position: relative; font-family: var(--display); font-weight: 700; font-size: 104px; line-height: .85; letter-spacing: .01em; }
+/* Long words shrink to fit the tile: --n is the longest word's length, set in mediaHtml. */
+.art .big { position: relative; font-family: var(--display); font-weight: 700; font-size: min(var(--big, 104px), calc(170cqw / var(--n, 3))); line-height: .85; letter-spacing: .01em; }
 .art .small { position: relative; font-family: var(--mono); font-size: 12px; letter-spacing: .12em; opacity: .85; margin-top: 8px; }
 .art .ph { position: absolute; top: 14px; left: 14px; font-family: var(--mono); font-size: 10px; letter-spacing: .1em; opacity: .6; }
 .play { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -60%); width: 58px; height: 58px; border-radius: 50%; background: rgba(0,0,0,.4); display: grid; place-items: center; border: 1.5px solid rgba(255,255,255,.7); }
@@ -185,7 +186,7 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
 .grid .media { aspect-ratio: 1; }
 .grid .art { padding: 8px; }
-.grid .art .big { font-size: 34px; }
+.grid .art .big { --big: 34px; }
 .grid .art .small, .grid .art .ph { display: none; }
 .grid .play { width: 26px; height: 26px; border-width: 1px; transform: none; top: 6px; left: auto; right: 6px; }
 .grid .play svg { width: 10px; height: 10px; margin-left: 2px; }
@@ -248,7 +249,7 @@ tr.done .check svg { stroke: #fff; }
 .proof-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .proof-thumb { width: 64px; height: 64px; border-radius: 8px; overflow: hidden; position: relative; flex: none; }
 .proof-thumb .media { aspect-ratio: 1; height: 100%; }
-.proof-thumb .art .big { font-size: 22px; }
+.proof-thumb .art .big { --big: 22px; }
 .proof-thumb .art { padding: 6px; }
 .proof-thumb .art .small, .proof-thumb .art .ph, .proof-thumb .play, .proof-thumb .dur { display: none; }
 .proof-ok { font-size: 13px; color: var(--p-green); font-weight: 600; }
@@ -286,7 +287,7 @@ textarea.field { min-height: 70px; resize: vertical; }
 .ex-sub { padding: 10px 16px 0; font-size: 12px; color: var(--muted); }
 .egrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding-top: 10px; }
 .etile { position: relative; display: block; min-width: 0; }
-.etile .art .big { font-size: 46px; }
+.etile .art .big { --big: 46px; }
 .etile .art .small { display: none; }
 .etile .art { padding-bottom: 40px; }
 .etile .art .ph { display: none; }
@@ -436,3 +437,10 @@ img.av { object-fit: cover; background: var(--raise); }
 .plate-val.long { font-size: 21px; }
 .wk li.cardio-li { flex-wrap: wrap; row-gap: 0; }
 [data-act="healthImport"] svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; vertical-align: -4px; }
+
+/* ---------- v0.1.5: failed sets, barbell or dumbbell ---------- */
+.setno.failed { background: color-mix(in srgb, var(--pr) 16%, transparent); color: var(--pr); }
+.wk li.setline .failed i { color: var(--pr); }
+.eqseg { display: inline-flex; align-self: flex-start; gap: 2px; padding: 2px; border-radius: 9px; background: var(--raise); }
+.eqseg button { font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 7px; color: var(--muted); }
+.eqseg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }

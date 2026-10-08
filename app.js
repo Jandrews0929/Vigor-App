@@ -1,7 +1,7 @@
 /* Vigor trial app. Plain JavaScript, no build step. Data lives in Supabase (see supabase/schema.sql). */
 'use strict';
 
-const VERSION = '0.1.4';
+const VERSION = '0.1.5';
 const CFG = window.VIGOR_CONFIG || {};
 
 /* ---------- Exercise library ----------
@@ -20,26 +20,48 @@ defEx('Legs', 'squat:Back squat:bb barbell quads|front:Front squat:barbell quads
   'splitsq:Bulgarian split squat:bss rfess db|lunge:Walking lunge:lunges db|hacksq:Hack squat:machine|legext:Leg extension:quads machine|' +
   'calf:Standing calf raise:calves|seatcalf:Seated calf raise:calves|sled:Sled push:prowler|smithsq:Smith machine squat|boxsq:Box squat:barbell|' +
   'stepup:Step-up:box db|adduct:Hip adduction:adductor machine inner thigh|abduct:Hip abduction:abductor machine outer thigh glutes');
-defEx('Push', 'bench:Bench press:bp flat barbell chest|incline:Incline bench press:barbell chest|dbbench:Dumbbell bench press:db flat chest|' +
+defEx('Push', 'bench:Bench press:bp flat chest|incline:Incline bench press:chest|dbbench:Dumbbell bench press:db flat chest|' +
   'inclinedb:Incline DB press:dumbbell bench chest|cgbench:Close-grip bench:cgbp triceps press|dip:+Weighted dip:dips triceps chest|' +
   'pushup:Push-up:press up pushups chest|flyes:Cable fly:flye flies crossover chest|decline:Decline bench press:chest|' +
   'machinechest:Machine chest press|pecdeck:Pec deck:fly machine chest|dbfly:Dumbbell fly:flye flies db chest');
 defEx('Pull', 'pullup:+Weighted pull-up:pullups chin up back lats|chinup:+Weighted chin-up:chinups back|latpd:Lat pulldown:lats cable back|' +
-  'row:Barbell row:bent over bb back|dbrow:Dumbbell row:db one arm back|tbar:T-bar row:back|cablerow:Seated cable row:back|pendlay:Pendlay row:barbell back|' +
+  'row:Bent-over row:back|dbrow:One-arm dumbbell row:db single arm back|tbar:T-bar row:back|cablerow:Seated cable row:back|pendlay:Pendlay row:barbell back|' +
   'shrug:Shrug:traps|chestrow:Chest-supported row:incline row back|machinerow:Machine row:back|straightarm:Straight-arm pulldown:lats pullover cable|' +
   'invrow:Inverted row:bodyweight back');
 defEx('Hinge', 'dead:Deadlift:conventional dl|sumo:Sumo deadlift:dl|rdl:Romanian deadlift:rdl dl stiff leg sldl hamstrings|trapbar:Trap bar deadlift:hex bar dl|' +
   'hipthrust:Hip thrust:glute bridge glutes|legcurl:Lying leg curl:hamstrings machine|seatlegcurl:Seated leg curl:hamstrings machine|goodmorning:Good morning|' +
   'kbswing:Kettlebell swing:kb|clean:Power clean:olympic|snatch:Power snatch:olympic|backext:Back extension:hyperextension hyper|pullthru:Cable pull-through:glutes');
-defEx('Shoulders', 'ohp:Overhead press:ohp military standing barbell|pushpress:Push press|dbpress:Seated DB press:dumbbell shoulder press|' +
+defEx('Shoulders', 'ohp:Overhead press:ohp military standing shoulder press|pushpress:Push press|dbpress:Seated shoulder press:db dumbbell|' +
   'latraise:Lateral raise:side delts db dumbbell|facepull:Cable face pull:rear delts|arnold:Arnold press:dumbbell|reardelt:Rear delt fly:reverse fly delts|' +
   'uprow:Upright row|cablelat:Cable lateral raise:side delts|frontraise:Front raise:delts|machinesp:Machine shoulder press');
-defEx('Arms', 'curl:Barbell curl:biceps bb|dbcurl:Dumbbell curl:biceps db|hammer:Hammer curl:biceps|triext:Triceps pushdown:tricep cable rope|' +
+defEx('Arms', 'curl:Biceps curl:bicep|dbcurl:Dumbbell curl:biceps db|hammer:Hammer curl:biceps|triext:Triceps pushdown:tricep cable rope|' +
   'skull:Skull crusher:lying triceps extension ez|preacher:Preacher curl:biceps ez|cablecurl:Cable curl:biceps|ohtri:Overhead triceps extension:tricep cable db|' +
   'inclinecurl:Incline dumbbell curl:biceps db|ezcurl:EZ-bar curl:biceps');
 defEx('Core', 'abwheel:Ab wheel rollout:abs|hanging:Hanging leg raise:abs|farmer:Farmer carry:farmers walk grip|cablecrunch:Cable crunch:abs|' +
   'russian:Russian twist:obliques abs|pallof:Pallof press:anti rotation');
+// Movements done with a barbell or dumbbells. The first style is the default, and it's what sets logged before styles existed count as.
+const EQUIP = {
+  bench: ['barbell', 'dumbbell'], incline: ['barbell', 'dumbbell'], decline: ['barbell', 'dumbbell'],
+  ohp: ['barbell', 'dumbbell'], dbpress: ['dumbbell', 'barbell'], uprow: ['barbell', 'dumbbell'], frontraise: ['dumbbell', 'barbell'],
+  row: ['barbell', 'dumbbell'], shrug: ['barbell', 'dumbbell'],
+  rdl: ['barbell', 'dumbbell'], hipthrust: ['barbell', 'dumbbell'],
+  splitsq: ['dumbbell', 'barbell'], lunge: ['dumbbell', 'barbell'], stepup: ['dumbbell', 'barbell'],
+  curl: ['barbell', 'dumbbell'], skull: ['barbell', 'dumbbell'], preacher: ['barbell', 'dumbbell']
+};
+const EQ_NAME = { barbell: 'Barbell', dumbbell: 'Dumbbell' };
+// Exercises folded into another one's dumbbell style (schema v5 moves their logged sets across).
+const MERGED = { dbbench: ['bench', 'dumbbell'], inclinedb: ['incline', 'dumbbell'], dbcurl: ['curl', 'dumbbell'] };
+Object.keys(MERGED).forEach(k => (EX[k].merged = MERGED[k]));
 const exName = k => (EX[k] ? EX[k].name : k);
+// The style a set or workout entry counts as: its own, or the exercise's default. Null for single-style exercises.
+const eqNorm = (ex, eq) => (EQUIP[ex] ? (EQUIP[ex].includes(eq) ? eq : EQUIP[ex][0]) : null);
+// "Dumbbell bench press", "Barbell Bulgarian split squat"; plain name when the exercise has one style.
+function exLabel(ex, eq) {
+  if (MERGED[ex]) [ex, eq] = MERGED[ex];
+  const n = exName(ex); const e = eqNorm(ex, eq);
+  if (!e) return n;
+  return EQ_NAME[e] + ' ' + (/^(Bulgarian|Romanian|Arnold|Pendlay|EZ)\b/.test(n) ? n : n.charAt(0).toLowerCase() + n.slice(1));
+}
 const exColor = k => (EX[k] ? EX[k].color : 'blue');
 const exAdded = k => !!(EX[k] && EX[k].added);
 function addCustomEx(r) {
@@ -54,16 +76,18 @@ function exIndex(k) {
   const e = EX[k];
   if (!e.words) {
     e.nameWords = norm(e.name).split(' ');
-    e.words = norm(e.name + ' ' + e.alias + ' ' + e.grp).split(' ');
+    e.words = norm(e.name + ' ' + e.alias + ' ' + e.grp + ' ' + (EQUIP[k] || []).join(' ')).split(' ');
     e.words.slice().forEach(w => SYN[w] && e.words.push(SYN[w]));
     e.key = exKey(e.name);
   }
   return e;
 }
+// "Dumbbell bench press" and "Barbell curl" typed out in full find that exercise in that style.
+const styleKeys = k => (v5() && EQUIP[k] ? EQUIP[k].map(eq => exKey(exLabel(k, eq))) : []);
 // What the picker offers: the shared list, plus exercises this person made that are still waiting for review.
 function pickable() {
   const mine = store.get('vigor.myEx', []);
-  return Object.keys(EX).filter(k => EX[k].status === 'approved' || (EX[k].status === 'pending' && S.me && (EX[k].by === S.me.id || mine.includes(k))));
+  return Object.keys(EX).filter(k => !(EX[k].merged && v5()) && (EX[k].status === 'approved' || (EX[k].status === 'pending' && S.me && (EX[k].by === S.me.id || mine.includes(k)))));
 }
 function searchEx(text) {
   const qn = norm(text); const keys = pickable();
@@ -73,8 +97,9 @@ function searchEx(text) {
   keys.forEach(k => {
     const e = exIndex(k); const n = e.nameWords.join(' ');
     let rank;
-    if (e.key === compact) rank = 0;
-    else if (n.startsWith(qn) || e.key.startsWith(compact)) rank = 1;
+    const sk = styleKeys(k);
+    if (e.key === compact || sk.includes(compact)) rank = 0;
+    else if (n.startsWith(qn) || e.key.startsWith(compact) || sk.some(x => x.startsWith(compact))) rank = 1;
     else if (toks.every(t => e.words.some(w => w.startsWith(t)))) rank = toks.every(t => e.nameWords.some(w => w.startsWith(t))) ? 2 : 3;
     else if (compact.length >= 3 && e.key.includes(compact)) rank = 3;
     else return;
@@ -92,7 +117,7 @@ function screenExName(n) {
 }
 const TEMPLATES = [
   { name: 'Lower A', ex: ['squat', 'rdl', 'lunge'] },
-  { name: 'Push A', ex: ['bench', 'ohp', 'inclinedb', 'triext'] },
+  { name: 'Push A', ex: ['bench', 'ohp', 'incline:dumbbell', 'triext'] },
   { name: 'Pull A', ex: ['pullup', 'row', 'latpd', 'curl'] },
   { name: 'Full body', ex: ['dead', 'bench', 'dbrow', 'splitsq'] }
 ];
@@ -189,9 +214,10 @@ const S = {
   schema: 1, // which version of supabase/schema.sql the database has; checked at sign-in
   legacy: false // true until the database has run the v2 schema (likes, set types, custom exercises)
 };
-const NEED_SCHEMA = 4;
+const NEED_SCHEMA = 5;
 const v3 = () => S.schema >= 3; // profile photos, comment replies and comment votes
 const v4 = () => S.schema >= 4; // cardio
+const v5 = () => S.schema >= 5; // failed sets, barbell or dumbbell styles
 // Set by the Vigor phone app (native/), which loads this same web app and adds Apple Health or Health Connect.
 const NATIVE = () => (window.VigorNative && typeof window.VigorNative.call === 'function' ? window.VigorNative : null);
 let sb = null;
@@ -220,7 +246,8 @@ async function q(p) { const { data, error } = await p; if (error) throw error; r
 const mediaUrl = path => sb.storage.from('media').getPublicUrl(path).data.publicUrl;
 // Warm-up sets are logged but never count toward PRs, history or volume.
 const noWarm = qb => (S.legacy ? qb : qb.neq('kind', 'warmup'));
-const setCols = () => 'workout_id,ex,weight,reps,is_pr,pr_types,idx' + (S.legacy ? '' : ',kind');
+const eqCol = () => (v5() ? ',equip' : ''); // the equip column arrives with schema v5
+const setCols = () => 'workout_id,ex,weight,reps,is_pr,pr_types,idx' + (S.legacy ? '' : ',kind') + eqCol();
 function fmtCount(n) { return n >= 10000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : num(n); }
 
 const ICON = {
@@ -318,13 +345,13 @@ async function loadProfile(uid) {
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
   const [posts, prs, workouts, monthSets, cprs] = await Promise.all([
     q(visibleSelect().eq('user_id', uid).order('created_at', { ascending: false }).limit(90)),
-    q(sb.from('sets').select('ex,weight,reps,workout_id,created_at').eq('user_id', uid).eq('is_pr', true).order('weight', { ascending: false })),
+    q(sb.from('sets').select('ex,weight,reps,workout_id,created_at' + eqCol()).eq('user_id', uid).eq('is_pr', true).order('weight', { ascending: false })),
     q(sb.from('workouts').select('id,started_at').eq('user_id', uid).gte('started_at', new Date(Date.now() - 120 * 86400000).toISOString())),
     q(noWarm(sb.from('sets').select('weight,reps').eq('user_id', uid).gte('created_at', monthStart.toISOString()))),
     v4() ? q(sb.from('activities').select('*').eq('user_id', uid).eq('is_pr', true)) : Promise.resolve([])
   ]);
   const best = {};
-  prs.forEach(s => { if (!best[s.ex] || +s.weight > +best[s.ex].weight) best[s.ex] = s; });
+  prs.forEach(s => { const k = s.ex + '|' + eqNorm(s.ex, s.equip); if (!best[k] || +s.weight > +best[k].weight) best[k] = s; });
   // cardio plates: the best activity for each PR type (fastest 5K, longest hike...)
   const cbest = {};
   cprs.forEach(a => (a.pr_types || []).forEach(t => { const v = cardioPr(a, t); if (!cbest[t] || v.score > cbest[t].v.score) cbest[t] = { a, v }; }));
@@ -361,10 +388,12 @@ async function loadPost(id) {
   await ensureProfiles(p.comments.map(c => c.user_id));
   const pr = p.sets.find(s => s.is_pr);
   if (pr) {
-    const hist = await q(noWarm(sb.from('sets').select('weight,workout_id,created_at').eq('user_id', p.user_id).eq('ex', pr.ex)).order('created_at'));
+    const eq = eqNorm(pr.ex, pr.equip);
+    const hist = (await q(noWarm(sb.from('sets').select('weight,workout_id,created_at' + eqCol()).eq('user_id', p.user_id).eq('ex', pr.ex)).order('created_at')))
+      .filter(h => eqNorm(pr.ex, h.equip) === eq);
     const byW = new Map();
     hist.forEach(h => { const b = byW.get(h.workout_id); if (!b || +h.weight > +b.w) byW.set(h.workout_id, { w: +h.weight, d: h.created_at, wid: h.workout_id }); });
-    p.history = { ex: pr.ex, points: [...byW.values()].slice(-10) };
+    p.history = { ex: pr.ex, eq, points: [...byW.values()].slice(-10) };
   }
   S.data['post:' + id] = p;
 }
@@ -375,7 +404,32 @@ async function loadCardioHist() {
 }
 async function loadHist(ex) {
   if (S.hist[ex]) return;
-  S.hist[ex] = await q(noWarm(sb.from('sets').select('weight,reps,created_at').eq('user_id', S.me.id).eq('ex', ex)).order('created_at'));
+  S.hist[ex] = await q(noWarm(sb.from('sets').select('weight,reps,created_at' + (S.legacy ? '' : ',kind') + eqCol()).eq('user_id', S.me.id).eq('ex', ex)).order('created_at'));
+}
+// Your logged sets of one exercise in one style: barbell bench history never sets the weights for dumbbell bench.
+function histOf(ex, eq) {
+  const h = S.hist[ex] || []; const want = eqNorm(ex, eq);
+  return want ? h.filter(r => eqNorm(ex, r.equip) === want) : h;
+}
+// The style you used last time, so a new workout starts there.
+function lastEq(ex) {
+  if (!EQUIP[ex]) return undefined;
+  const h = S.hist[ex] || [];
+  return eqNorm(ex, h.length ? h[h.length - 1].equip : null);
+}
+// A workout entry for an exercise, with sets filled from the last session in that style.
+function newEntry(id, eq) {
+  const e = { id, sets: [] };
+  if (EQUIP[id] && v5()) e.eq = eqNorm(id, eq || lastEq(id));
+  fillSets(e, 3);
+  return e;
+}
+// Fills the sets you haven't checked off from your last full working set in this style (not a drop set or a missed rep).
+function fillSets(e, n) {
+  const h = histOf(e.id, e.eq); const l = h.slice().reverse().find(x => !x.kind || x.kind === 'normal') || h[h.length - 1];
+  const w = l ? String(+l.weight) : '', r = l ? String(l.reps) : '';
+  if (!e.sets.length) e.sets = Array.from({ length: n }, () => ({ w, r, done: false }));
+  else e.sets.forEach(x => { if (!x.done) { x.w = w; x.r = r; } });
 }
 let searchSeq = 0;
 async function searchPeople(raw) {
@@ -425,8 +479,8 @@ async function loadAdmin() {
 }
 
 /* ---------- PR detection ---------- */
-function detect(ex, w, r) {
-  const h = S.hist[ex] || [];
+function detect(e, w, r) {
+  const ex = e.id; const h = histOf(ex, e.eq);
   w = +w; r = +r;
   if (!h.length || !(w > 0) || !(r > 0)) return [];
   const maxW = Math.max(...h.map(s => +s.weight)), maxE = Math.max(...h.map(s => e1(+s.weight, s.reps)));
@@ -442,7 +496,7 @@ function computePRs() {
     warm += e.sets.filter(s => s.done && +s.r > 0 && s.kind === 'warmup').length;
     const done = e.sets.filter(s => s.done && +s.w >= 0 && +s.r > 0 && s.kind !== 'warmup');
     sets += done.length; done.forEach(s => (vol += +s.w * +s.r));
-    const h = S.hist[e.id] || [];
+    const h = histOf(e.id, e.eq);
     if (!done.length) return;
     if (!h.length) return; // first time logging this lift sets the baseline, not a PR
     const maxW = Math.max(...h.map(s => +s.weight)), maxE = Math.max(...h.map(s => e1(+s.weight, s.reps)));
@@ -452,7 +506,7 @@ function computePRs() {
     const est = done.reduce((a, s) => (e1(+s.w, +s.r) > e1(+a.w, +a.r) ? s : a), done[0]);
     if (e1(+est.w, +est.r) > maxE + 0.01) add(est, 'Est. 1RM ' + Math.round(e1(+est.w, +est.r)));
     done.forEach(s => { const atW = h.filter(x => +x.weight >= +s.w); if (atW.length && +s.r > Math.max(...atW.map(x => x.reps))) add(s, 'Most reps at ' + wt(e.id, s.w)); });
-    found.forEach((types, s) => groups.push({ ex: e.id, w: +s.w, r: +s.r, types, set: s }));
+    found.forEach((types, s) => groups.push({ ex: e.id, eq: eqNorm(e.id, e.eq), w: +s.w, r: +s.r, types, set: s }));
   });
   const cardio = (S.workout.cardio || []).map(c => ({ c, a: blockToActivity(c) })).filter(x => x.a.duration_s > 0);
   cardio.forEach(x => { x.types = detectCardio(x.a, S.ahist || []); if (x.types.length) groups.push({ cardio: true, ...x }); });
@@ -475,28 +529,28 @@ function mediaHtml(p, full) {
   const acts = p.acts || []; const cpr = acts.find(a => a.is_pr); const lead = acts[0];
   let big = pr ? wt(pr.ex, pr.weight) : (p.category === 'Workout' ? (p.wtitle || 'WORKOUT') : p.category);
   const ns = (p.sets || []).length;
-  let sub = pr ? `${exName(pr.ex)} · ${pr.reps} rep${pr.reps > 1 ? 's' : ''}` : (p.category === 'Workout' ? [ns ? `${ns} set${ns === 1 ? '' : 's'}` : '', ...acts.map(a => a.distance_m > 0 ? `${fmtDist(a.kind, a.distance_m)} ${cLabel(a.kind).toLowerCase()}` : cLabel(a.kind))].filter(Boolean).join(' · ') : 'Text post');
+  let sub = pr ? `${exLabel(pr.ex, pr.equip)} · ${pr.reps} rep${pr.reps > 1 ? 's' : ''}` : (p.category === 'Workout' ? [ns ? `${ns} set${ns === 1 ? '' : 's'}` : '', ...acts.map(a => a.distance_m > 0 ? `${fmtDist(a.kind, a.distance_m)} ${cLabel(a.kind).toLowerCase()}` : cLabel(a.kind))].filter(Boolean).join(' · ') : 'Text post');
   if (!pr && cpr) { const v = cardioPr(cpr, cpr.pr_types[0]); big = v.val + (v.unit === 'mi' || v.unit === 'ft' ? ' ' + v.unit : ''); sub = `${cpr.pr_types[0]} · ${cLabel(cpr.kind)}`; }
   else if (!pr && lead && !(p.sets || []).length) {
     big = lead.distance_m > 0 ? fmtDist(lead.kind, lead.distance_m) : fmtDur(lead.duration_s);
     sub = [cLabel(lead.kind), lead.title, lead.distance_m > 0 ? fmtDur(lead.duration_s) : ''].filter(Boolean).join(' · ');
   }
   return `<div class="media"${dbl}><div class="art" style="background:linear-gradient(160deg,hsl(${h} 45% 20%),hsl(${(h + 25) % 360} 55% 34%))">
-    <span class="big">${esc(String(big).toUpperCase())}</span><span class="small">${esc(sub.toUpperCase())}</span></div></div>`;
+    <span class="big" style="--n:${Math.max(3, ...String(big).split(/\s+/).map(x => x.length))}">${esc(String(big).toUpperCase())}</span><span class="small">${esc(sub.toUpperCase())}</span></div></div>`;
 }
-const KIND_TAG = { warmup: 'W', drop: 'D' };
+const KIND_TAG = { warmup: 'W', drop: 'D', failed: 'F' };
 function workoutSummary(p, full) {
   const acts = p.acts || [];
   if ((!p.sets || !p.sets.length) && !acts.length) return '';
   const byEx = [];
-  p.sets.forEach(s => { let g = byEx.find(x => x.ex === s.ex); if (!g) byEx.push(g = { ex: s.ex, sets: [] }); g.sets.push(s); });
+  p.sets.forEach(s => { const eq = eqNorm(s.ex, s.equip); let g = byEx.find(x => x.ex === s.ex && x.eq === eq); if (!g) byEx.push(g = { ex: s.ex, eq, sets: [] }); g.sets.push(s); });
   const count = [byEx.length ? `${byEx.length} exercise${byEx.length > 1 ? 's' : ''}` : '', acts.length ? `${acts.length} cardio` : ''].filter(Boolean).join(' · ');
   return `<div class="wk"><h4>${esc(p.wtitle)}<span>${count}</span></h4><ul>${acts.map(a => `<li class="cardio-li"><b>${esc(cLabel(a.kind))}${a.title ? ' · ' + esc(a.title) : ''}</b>
       <span class="cstats">${cardioStats(a).map(esc).join(' · ')}${full && a.effort ? ' · felt ' + esc(EFFORT[a.effort - 1].toLowerCase()) : ''}</span></li>`).join('')}${byEx.map(g => {
     const work = g.sets.filter(s => s.kind !== 'warmup'); const nw = g.sets.length - work.length;
     const top = (work.length ? work : g.sets).reduce((a, s) => (+s.weight > +a.weight ? s : a), (work.length ? work : g.sets)[0]);
     const count = `${work.length} set${work.length === 1 ? '' : 's'}${nw ? ` + ${nw} warm-up` : ''}`;
-    return `<li><b>${esc(exName(g.ex))}</b><span>${wt(g.ex, top.weight)} × ${top.reps} · ${count}</span></li>` +
+    return `<li><b>${esc(exLabel(g.ex, g.eq))}</b><span>${wt(g.ex, top.weight)} × ${top.reps} · ${count}</span></li>` +
       (full ? `<li class="setline">${g.sets.map(s => `<span class="${s.kind || ''}">${KIND_TAG[s.kind] ? `<i>${KIND_TAG[s.kind]}</i>` : ''}${wt(g.ex, s.weight)}×${s.reps}</span>`).join('')}</li>` : '');
   }).join('')}</ul></div>`;
 }
@@ -523,7 +577,7 @@ function postCard(p, full) {
     </div>
     ${p.status === 'held' ? '<div class="hint" style="margin-top:0">Held for review. Only you and the moderators can see this post.</div>' : ''}
     ${media}
-    ${prs.length || cprs.length ? `<div class="prs">${prs.map(s => `<span class="pr-badge">${ICON.trophy}${esc(exName(s.ex))} · ${wt(s.ex, s.weight)} × ${s.reps} · ${esc((s.pr_types || [])[0] || 'PR')}</span>`).join('')}${
+    ${prs.length || cprs.length ? `<div class="prs">${prs.map(s => `<span class="pr-badge">${ICON.trophy}${esc(exLabel(s.ex, s.equip))} · ${wt(s.ex, s.weight)} × ${s.reps} · ${esc((s.pr_types || [])[0] || 'PR')}</span>`).join('')}${
       cprs.map(a => a.pr_types.map(t => { const v = cardioPr(a, t); return `<span class="pr-badge">${ICON.trophy}${esc(t)} · ${esc(v.val)} ${v.unit === 'mi' || v.unit === 'ft' ? esc(v.unit) : ''}</span>`; }).join('')).join('')}</div>` : ''}
     <div class="react-row">
       ${S.legacy ? '' : `<button class="like-btn" data-act="like" data-id="${p.id}" aria-pressed="${!!p.mine.like}" aria-label="${p.mine.like ? 'Unlike' : 'Like'}">${ICON.heart}<span class="n">${p.react.like ? fmtCount(p.react.like) : ''}</span></button>`}
@@ -603,7 +657,7 @@ function installNotice() {
 }
 function schemaNotice() {
   if (S.schema >= NEED_SCHEMA || !S.me.is_admin) return '';
-  const missing = [S.schema < 2 && 'likes, warm-up and drop sets, new exercises', S.schema < 3 && 'profile photos, comment replies and votes', S.schema < 4 && 'cardio logging and Health imports'].filter(Boolean);
+  const missing = [S.schema < 2 && 'likes, warm-up and drop sets, new exercises', S.schema < 3 && 'profile photos, comment replies and votes', S.schema < 4 && 'cardio logging and Health imports', S.schema < 5 && 'failed sets and barbell or dumbbell choices'].filter(Boolean);
   const off = missing.length > 1 ? missing.slice(0, -1).join(', ') + ', and ' + missing[missing.length - 1] : missing[0];
   return `<div class="notice warnbox"><b>Database update needed</b><span>This version of Vigor needs the latest supabase/schema.sql. Open Supabase, go to SQL Editor, paste the whole file and press Run. Until then these are turned off: ${off}.</span></div>`;
 }
@@ -658,8 +712,8 @@ function historyChart(hist) {
   const x = i => pl + i * (W - pl - pr) / (h.length - 1);
   const y = w => pt + (1 - (w - lo) / span) * (H - pt - pb);
   const pts = h.map((s, i) => `${x(i)},${y(s.w)}`).join(' ');
-  return `<div class="chart"><div class="label">${esc(exName(hist.ex))} history · top set, lb</div>
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(exName(hist.ex))} history">
+  return `<div class="chart"><div class="label">${esc(exLabel(hist.ex, hist.eq))} history · top set, lb</div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(exLabel(hist.ex, hist.eq))} history">
       <line x1="${pl}" x2="${W - pr}" y1="${y(hi)}" y2="${y(hi)}" stroke="var(--line)" stroke-dasharray="3 3"/>
       <line x1="${pl}" x2="${W - pr}" y1="${H - pb}" y2="${H - pb}" stroke="var(--line)"/>
       <text x="${pl - 6}" y="${y(hi) + 4}" text-anchor="end" font-size="10" fill="var(--muted)">${hi}</text>
@@ -716,7 +770,8 @@ function profileScreen(u) {
   const shown = d.posts.filter(match);
   let goal = '';
   if (U.goal_label && U.goal_ex && U.goal_target) {
-    const best = d.wall.find(s => s.ex === U.goal_ex);
+    const [gx, geq] = MERGED[U.goal_ex] || [U.goal_ex];
+    const best = d.wall.find(s => !s.cardio && s.ex === gx && eqNorm(gx, s.equip) === eqNorm(gx, geq));
     const cur = best ? +best.weight : 0; const pct = Math.max(0, Math.min(100, cur / U.goal_target * 100));
     goal = `<div class="goal"><div class="row"><b>${esc(U.goal_label)}</b><span>${cur ? wt(U.goal_ex, cur) : 0} of ${wt(U.goal_ex, U.goal_target)} lb</span></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
   }
@@ -732,10 +787,10 @@ function profileScreen(u) {
       <div class="stats"><div><b>${d.streak}</b><span>week streak</span></div><div><b>${d.month}</b><span>workouts this month</span></div><div><b>${d.volume >= 10000 ? Math.round(d.volume / 1000) + 'k' : num(d.volume)}</b><span>lb this month</span></div></div>
     </section>
     <section class="wall"><div class="wall-head"><h3>PR wall</h3><span>${d.wall.length ? 'Tap a plate for its proof' : ''}</span></div>
-      ${d.wall.length ? `<div class="plates">${d.wall.map(x => `<button class="plate-tile" data-act="${x.post ? 'open' : 'noproof'}" data-id="${esc(x.post || (x.cardio ? x.type : x.ex))}">
+      ${d.wall.length ? `<div class="plates">${d.wall.map(x => `<button class="plate-tile" data-act="${x.post ? 'open' : 'noproof'}" data-id="${esc(x.post || (x.cardio ? x.type : x.ex + '|' + (x.equip || '')))}">
           ${x.cardio ? `<span class="plate c-${CARDIO[x.kind].color}"><span class="plate-val ${x.val.length > 5 ? 'long' : ''}">${esc(x.val)}</span><span class="plate-unit">${esc(x.unit)}</span></span>
           <span class="plate-name">${esc(x.type)}</span>` : `<span class="plate c-${exColor(x.ex)}"><span class="plate-val">${wt(x.ex, x.weight)}</span><span class="plate-unit">lb × ${x.reps}</span></span>
-          <span class="plate-name">${esc(exName(x.ex))}</span>`}
+          <span class="plate-name">${esc(exLabel(x.ex, x.equip))}</span>`}
           ${x.post ? `<span class="plate-meta">▶ Proof · ${shortDate(x.created_at)}</span>` : `<span class="plate-meta none">No proof yet · ${shortDate(x.created_at)}</span>`}
         </button>`).join('')}</div>` : `<div class="empty" style="padding:8px">${mine ? 'Log a lift or a run twice and beat it to earn your first PR plate.' : 'No PRs yet.'}</div>`}
     </section>
@@ -814,28 +869,29 @@ function logScreen() {
       <span class="label" style="margin-top:8px">Templates</span>
       ${[...mine.map((t, i) => ({ ...t, key: 'm' + i })), ...TEMPLATES.map((t, i) => ({ ...t, key: 'b' + i }))].map(t => `<button class="tpl" data-act="startTpl" data-id="${t.key}">
         <span class="tpl-top"><h4>${esc(t.name)}</h4>${t.from ? `<span class="from">From ${esc(t.from)}</span>` : ''}</span>
-        <p>${t.ex.map(exName).map(esc).join(', ')}</p></button>`).join('')}
+        <p>${t.ex.map(k => { const [x, eq] = tplItem(k); return eq ? exLabel(x, eq) : exName(x); }).map(esc).join(', ')}</p></button>`).join('')}
       <p class="when" style="padding:0">Weights fill in from your last session. Vigor flags a PR when you beat a lift you've logged before.</p>
     </div>`;
   }
   return `<header class="top"><input class="title-input" id="wtitle" value="${esc(w.title)}" aria-label="Workout name" maxlength="60"><span class="timer" id="elapsed">${elapsed()}</span><button class="btn primary sm" data-act="finish">Finish</button></header>
     ${!w.ex.length && !(w.cardio || []).length ? `<div class="empty">Add your first exercise${v4() ? ' or cardio' : ''} to start logging.</div>` : ''}
     ${w.ex.map((e, i) => {
-      const h = S.hist[e.id] || []; const last = h[h.length - 1];
+      const h = histOf(e.id, e.eq); const last = h[h.length - 1];
       const best = h.length ? h.reduce((a, s) => (+s.weight > +a.weight ? s : a), h[0]) : null;
       return `<section class="exblock"><div class="exblock-head"><h3>${esc(exName(e.id))}</h3>${best ? `<span class="best">Best ${wt(e.id, best.weight)} × ${best.reps}</span>` : '<span class="best">First time: sets your baseline</span>'}
         <button class="text-btn" data-act="rmEx" data-ex="${i}" style="color:var(--muted)">Remove</button></div>
-        <table class="sets"><thead><tr><th>Set</th><th>Previous</th><th>${exAdded(e.id) ? '+lb' : 'lb'}</th><th>Reps</th><th><span class="sr">Done</span></th></tr></thead><tbody>
-        ${e.sets.map((s, j) => `<tr class="${s.done ? 'done' : ''}"><td><button class="setno ${s.kind || ''}" data-act="setKind" data-ex="${i}" data-set="${j}" aria-label="Set ${j + 1}, ${KIND_NAME[s.kind || 'normal']}. Change set type">${setLabel(e.sets, j)}</button></td><td class="prev">${last ? wt(e.id, last.weight) + ' × ' + last.reps : '–'}</td>
+        ${e.eq ? `<div class="eqseg" role="group" aria-label="Equipment">${EQUIP[e.id].map(k => `<button data-act="eqPick" data-ex="${i}" data-id="${k}" aria-pressed="${e.eq === k}">${EQ_NAME[k]}</button>`).join('')}</div>` : ''}
+        <table class="sets"><thead><tr><th>Set</th><th>Previous</th><th>${exAdded(e.id) ? '+lb' : e.eq === 'dumbbell' ? 'lb each' : 'lb'}</th><th>Reps</th><th><span class="sr">Done</span></th></tr></thead><tbody>
+        ${e.sets.map((s, j) => `<tr class="${s.done ? 'done' : ''}"><td><button class="setno ${s.kind || ''}" data-act="setKind" data-ex="${i}" data-set="${j}" aria-label="Set ${j + 1}, ${KIND_NAME[s.kind || 'normal']}. Change set type">${setLabel(e.sets, j)}</button></td><td class="prev">${last ? wt(e.id, last.weight) + ' × ' + last.reps + (last.kind === 'failed' ? ' F' : '') : '–'}</td>
           <td><input id="w-${i}-${j}" data-ex="${i}" data-set="${j}" data-f="w" inputmode="decimal" value="${esc(s.w)}" aria-label="Weight, set ${j + 1}"></td>
           <td><input id="r-${i}-${j}" data-ex="${i}" data-set="${j}" data-f="r" inputmode="numeric" value="${esc(s.r)}" aria-label="Reps, set ${j + 1}"></td>
           <td><button class="check" data-act="toggleSet" data-ex="${i}" data-set="${j}" aria-label="Mark set ${j + 1} done">${ICON.check}</button></td></tr>
-          <tr class="pr-row"><td colspan="5"><div class="pr-live" id="prl-${i}-${j}">${prLive(e.id, s)}</div></td></tr>`).join('')}
+          <tr class="pr-row"><td colspan="5"><div class="pr-live" id="prl-${i}-${j}">${prLive(e, s)}</div></td></tr>`).join('')}
         </tbody></table>
         <button class="add-set" data-act="addSet" data-ex="${i}">+ Add set</button></section>`;
     }).join('')}
     ${(w.cardio || []).map(cardioBlock).join('')}
-    <div class="log-foot">${w.ex.length ? '<p class="when" style="padding:0">Tap a set number to mark it as a warm-up (W) or drop set (D). Warm-ups never count toward PRs.</p>' : ''}<button class="btn block" data-act="addEx">+ Add exercise</button>
+    <div class="log-foot">${w.ex.length ? `<p class="when" style="padding:0">Tap a set number to mark it as a warm-up (W)${v5() ? ', drop set (D) or failed rep (F)' : ' or drop set (D)'}. Warm-ups never count toward PRs.</p>` : ''}<button class="btn block" data-act="addEx">+ Add exercise</button>
       ${v4() ? '<button class="btn block" data-act="startCardio">+ Add cardio</button>' : ''}
       ${v4() && NATIVE() && !w.imported ? `<button class="btn block" data-act="healthImport">+ Import from ${esc(NATIVE().healthName)}</button>` : ''}
       <button class="btn danger block" data-act="discard">Discard workout</button></div>`;
@@ -868,14 +924,14 @@ function cardioLive(c) {
   return (pace ? `<span>${CARDIO[c.kind] && CARDIO[c.kind].speed ? 'Avg speed' : 'Pace'} <b>${pace}</b></span>` : '') +
     detectCardio(a, S.ahist || []).map(t => `<span class="pr">▲ PR · ${esc(t)}</span>`).join('');
 }
-const KIND_NAME = { normal: 'working set', warmup: 'warm-up', drop: 'drop set' };
+const KIND_NAME = { normal: 'working set', warmup: 'warm-up', drop: 'drop set', failed: 'failed rep' };
 // Warm-ups show W and drop sets D; working sets are numbered 1, 2, 3 without counting either.
 function setLabel(sets, j) {
   const k = sets[j].kind;
   if (KIND_TAG[k]) return KIND_TAG[k];
   return sets.slice(0, j + 1).filter(x => !KIND_TAG[x.kind]).length;
 }
-function prLive(ex, s) { return s.done && s.kind !== 'warmup' ? detect(ex, s.w, s.r).map(t => `<span>▲ PR · ${esc(t)}</span>`).join('') : ''; }
+function prLive(e, s) { return s.done && s.kind !== 'warmup' ? detect(e, s.w, s.r).map(t => `<span>▲ PR · ${esc(t)}</span>`).join('') : ''; }
 function elapsed() {
   if (!S.workout || S.workout.imported) return '';
   const sec = Math.floor((Date.now() - S.workout.started) / 1000);
@@ -900,7 +956,7 @@ function summaryScreen() {
     ${s.groups.length ? `<div class="found">${s.groups.map(g => g.cardio ? `<div class="found-item">
         <div class="found-top"><b>${esc(cLabel(g.a.kind))}${g.a.title ? ' · ' + esc(g.a.title) : ''}</b><span>${esc(cardioStats(g.a).slice(0, 2).join(' · '))}</span></div>
         <div class="types">${g.types.map(t => { const v = cardioPr(g.a, t); return `<span class="pr-badge">${ICON.trophy}${esc(t)} · ${esc(v.val)}${v.unit === 'mi' || v.unit === 'ft' ? ' ' + v.unit : ''}</span>`; }).join('')}</div></div>` : `<div class="found-item">
-        <div class="found-top"><b>${esc(exName(g.ex))}</b><span>${wt(g.ex, g.w)} × ${g.r}</span></div>
+        <div class="found-top"><b>${esc(exLabel(g.ex, g.eq))}</b><span>${wt(g.ex, g.w)} × ${g.r}</span></div>
         <div class="types">${g.types.map(t => `<span class="pr-badge">${ICON.trophy}${esc(t)}</span>`).join('')}</div></div>`).join('')}</div>` : ''}
     <div class="section-pad">
       <span class="label">${liftPr ? 'Proof: photo or video of the PR set' : s.groups.length ? 'Proof: a photo from it or a screenshot of your watch' : 'Photo or video (optional)'}</span>
@@ -925,7 +981,7 @@ function exListHtml(text) {
   const create = S.legacy || !t ? '' : `<button class="ex-create" data-act="newEx"><b>+ Create "${esc(t)}"</b><span>Not on the list? Add it and everyone can use it.</span></button>`;
   if (!keys.length) return `<p class="ex-none">No exercise matches "${esc(t)}".</p>` + create;
   // Offer "Create" under the results unless a name already starts with what was typed.
-  return rows + (t && !keys.some(k => exIndex(k).key.startsWith(exKey(t))) ? create : '');
+  return rows + (t && !keys.some(k => [exIndex(k).key, ...styleKeys(k)].some(x => x.startsWith(exKey(t)))) ? create : '');
 }
 let lastSheet = null;
 function sheetHtml() {
@@ -968,7 +1024,8 @@ function sheetHtml() {
     const set = S.workout && S.workout.ex[sh.ex] && S.workout.ex[sh.ex].sets[sh.set]; if (!set) { S.sheet = null; return ''; }
     const cur = set.kind || 'normal';
     inner = `<h3>Set type</h3>
-      ${[['normal', 'Working set', 'Counts toward PRs and volume.'], ['warmup', 'Warm-up (W)', 'Logged, but never counts toward PRs, history or volume.'], ['drop', 'Drop set (D)', 'A lighter set straight after a working set. Counts like any other set.']]
+      ${[['normal', 'Working set', 'Counts toward PRs and volume.'], ['warmup', 'Warm-up (W)', 'Logged, but never counts toward PRs, history or volume.'], ['drop', 'Drop set (D)', 'A lighter set straight after a working set. Counts like any other set.'],
+        ...(v5() ? [['failed', 'Failed rep (F)', 'You went for one more rep and missed it. Enter the reps you finished; they count like a working set.']] : [])]
         .map(([k, l, d]) => `<button class="opt kind-opt" data-act="setKindPick" data-id="${k}" aria-pressed="${cur === k}"><b>${l}</b><span>${d}</span></button>`).join('')}
       <button class="opt" data-act="rmSet" style="color:var(--pr)">Remove this set</button>`;
   } else if (sh.type === 'cardioKind') {
@@ -988,7 +1045,7 @@ function sheetHtml() {
     const p = findPost(sh.id);
     inner = `<h3>Likes</h3>${!p ? '' : sh.ready ? `<div class="sheet-people">${[...p.likers].reverse().map(peopleRow).join('')}</div>` : loading()}`;
   } else if (sh.type === 'noproof') {
-    inner = `<h3>${esc(exName(sh.ex))}</h3><p>This PR has no photo or video yet. Next time you beat it, add proof when you share the session and the plate will link to that post.</p><button class="btn block" data-act="closeSheet">Close</button>`;
+    inner = `<h3>${esc(sh.ex.includes('|') ? exLabel(...sh.ex.split('|')) : sh.ex)}</h3><p>This PR has no photo or video yet. Next time you beat it, add proof when you share the session and the plate will link to that post.</p><button class="btn block" data-act="closeSheet">Close</button>`;
   } else if (sh.type === 'discard') {
     inner = `<h3>Discard workout?</h3><p>Your sets from this session will be deleted.</p>
       <button class="btn danger block" data-act="discardYes">Discard</button><button class="btn block" data-act="closeSheet">Keep logging</button>`;
@@ -1083,6 +1140,14 @@ function go(tab) {
 }
 function push(entry, loader) { S.stack.push(entry); S.sheet = null; render(); if (loader) loader().then(() => render(true)).catch(fail); }
 function saveWorkout() { store.set('vigor.workout', S.workout); }
+// Template entries are exercise keys, optionally pinned to a style ("incline:dumbbell"). Old keys follow merges.
+function tplItem(k) {
+  let [id, eq] = String(k).split(':');
+  if (MERGED[id] && v5()) [id, eq] = MERGED[id];
+  // A database without styles yet still has the old separate exercises (Incline DB press and so on).
+  if (!v5() && eq) return [Object.keys(MERGED).find(m => MERGED[m][0] === id && MERGED[m][1] === eq) || id];
+  return [id, EQUIP[id] && eq ? eq : undefined];
+}
 // Adds a cardio block to the open workout, starting one named after the time of day if none is open.
 async function addCardioBlock(block, when, imported, name) {
   S.sheet = null;
@@ -1241,7 +1306,7 @@ const A = {
   },
   copy(id) {
     const p = findPost(id); if (!p) return;
-    const ex = [...new Set(p.sets.map(s => s.ex))];
+    const ex = [...new Set(p.sets.map(s => (EQUIP[s.ex] && s.equip ? s.ex + ':' + s.equip : s.ex)))];
     const mine = store.get('vigor.templates', []); mine.unshift({ name: p.wtitle, ex, from: handle(p.user_id) }); store.set('vigor.templates', mine.slice(0, 20));
     toast(`Saved "${p.wtitle}" to your templates on this phone`);
   },
@@ -1377,10 +1442,11 @@ const A = {
   startEmpty() { S.workout = { title: 'Workout', started: Date.now(), ex: [] }; saveWorkout(); S.sheet = { type: 'addEx' }; render(); },
   async startTpl(key) {
     const t = key[0] === 'm' ? store.get('vigor.templates', [])[+key.slice(1)] : TEMPLATES[+key.slice(1)];
-    S.workout = { title: t.name, started: Date.now(), ex: t.ex.map(id => ({ id, sets: [] })) };
+    const items = t.ex.map(tplItem);
+    S.workout = { title: t.name, started: Date.now(), ex: items.map(([id]) => ({ id, sets: [] })) };
     render();
-    try { await Promise.all(t.ex.map(loadHist)); } catch (e) { fail(e); }
-    S.workout.ex.forEach(e => { const h = S.hist[e.id] || []; const l = h[h.length - 1]; e.sets = [0, 1, 2].map(() => ({ w: l ? String(+l.weight) : '', r: l ? String(l.reps) : '', done: false })); });
+    try { await Promise.all(items.map(([id]) => loadHist(id))); } catch (e) { fail(e); }
+    S.workout.ex = items.map(([id, eq]) => newEntry(id, eq));
     saveWorkout(); render();
   },
   addEx() {
@@ -1401,8 +1467,9 @@ const A = {
     sh.err = screenExName(name) || (sh.grp ? '' : 'Pick the muscle group it works most.');
     if (sh.err) { render(true); return; }
     // Already on the list (built in, or added by someone): use that one instead of making a copy.
-    const same = pickable().find(k => exIndex(k).key === exKey(name));
-    if (same) { toast(`${exName(same)} is already on the list, so we added that.`); A.pickEx(same); return; }
+    const same = pickable().find(k => exIndex(k).key === exKey(name) || styleKeys(k).includes(exKey(name)));
+    const sameEq = same && (EQUIP[same] || []).find(eq => exKey(exLabel(same, eq)) === exKey(name));
+    if (same) { toast(`${sameEq ? exLabel(same, sameEq) : exName(same)} is already on the list, so we added that.`); A.pickEx(same, null, sameEq); return; }
     S.busy = true; render(true);
     try {
       const res = await q(sb.rpc('add_exercise', { p_name: name, p_group: sh.grp, p_added: !!sh.added }));
@@ -1432,12 +1499,19 @@ const A = {
     S.sheet = null; saveWorkout(); render(true);
   },
   rmSet() { const sh = S.sheet; S.workout.ex[sh.ex].sets.splice(sh.set, 1); S.sheet = null; saveWorkout(); render(true); },
-  async pickEx(id) {
+  async pickEx(id, _, eq) {
+    // "db bench" or "barbell row" picks that style; otherwise the one you used last time. (A tap passes its event as eq.)
+    const typed = S.sheet && S.sheet.type === 'addEx' ? norm(S.sheet.q || '') : '';
+    const hint = EQ_NAME[eq] ? eq : (/\b(db|dumbbells?)\b/.test(typed) ? 'dumbbell' : /\b(bb|barbell)\b/.test(typed) ? 'barbell' : null);
     S.sheet = null; if (!S.workout) { render(true); return; }
     try { await loadHist(id); } catch (e) { fail(e); }
-    const h = S.hist[id] || []; const l = h[h.length - 1];
-    S.workout.ex.push({ id, sets: [0, 1, 2].map(() => ({ w: l ? String(+l.weight) : '', r: l ? String(l.reps) : '', done: false })) });
+    S.workout.ex.push(newEntry(id, hint));
     saveWorkout(); render(true); window.scrollTo(0, document.body.scrollHeight);
+  },
+  eqPick(eq, el) {
+    const e = S.workout.ex[+el.dataset.ex]; if (!e || e.eq === eq) return;
+    e.eq = eq; fillSets(e);
+    saveWorkout(); render(true);
   },
   rmEx(_, el) { S.workout.ex.splice(+el.dataset.ex, 1); saveWorkout(); render(true); },
   addSet(_, el) { const e = S.workout.ex[el.dataset.ex]; const l = e.sets[e.sets.length - 1] || { w: '', r: '' }; e.sets.push({ w: l.w, r: l.r, done: false }); saveWorkout(); render(true); },
@@ -1524,6 +1598,7 @@ const A = {
         const g = s.groups.find(gr => gr.set === x);
         const row = { workout_id: wk.id, user_id: S.me.id, ex: e.id, idx: idx++, weight: +x.w || 0, reps: +x.r, is_pr: !!g, pr_types: g ? g.types : [] };
         if (!S.legacy) row.kind = x.kind || 'normal';
+        if (v5() && EQUIP[e.id]) row.equip = eqNorm(e.id, e.eq);
         rows.push(row);
       }));
       if (rows.length) await q(sb.from('sets').insert(rows));
@@ -1632,7 +1707,7 @@ document.addEventListener('input', ev => {
   if (t.dataset.f && S.workout) {
     const e = S.workout.ex[t.dataset.ex]; const s = e.sets[t.dataset.set];
     s[t.dataset.f] = t.value.replace(t.dataset.f === 'w' ? /[^\d.]/g : /\D/g, '');
-    const box = document.getElementById(`prl-${t.dataset.ex}-${t.dataset.set}`); if (box) box.innerHTML = prLive(e.id, s);
+    const box = document.getElementById(`prl-${t.dataset.ex}-${t.dataset.set}`); if (box) box.innerHTML = prLive(e, s);
     saveWorkout();
   } else if (t.dataset.cf && S.workout && S.workout.cardio) {
     const c = S.workout.cardio[+t.dataset.c]; if (!c) return; const f = t.dataset.cf;
@@ -1678,6 +1753,7 @@ async function boot() {
     await checkSchema();
     S.view = 'app';
     S.workout = store.get('vigor.workout', null);
+    if (S.workout && v5()) S.workout.ex.forEach(e => { if (MERGED[e.id]) [e.id, e.eq] = MERGED[e.id]; else if (EQUIP[e.id] && !e.eq) e.eq = EQUIP[e.id][0]; });
     go(S.workout ? 'log' : 'feed');
   } catch (e) { S.view = 'auth'; S.authMsg = e.message; S.authErr = true; render(); }
 }

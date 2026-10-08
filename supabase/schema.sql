@@ -171,6 +171,18 @@ create index if not exists activities_workout_idx on public.activities(workout_i
 -- the same Apple Health or Health Connect workout can only be imported once per person
 create unique index if not exists activities_external_idx on public.activities(user_id, source, external_id) where external_id is not null;
 
+-- ---------- v5: "failed" sets (the last rep was attempted and missed) and barbell or dumbbell styles of one exercise ----------
+alter table public.sets drop constraint if exists sets_kind_check;
+alter table public.sets add constraint sets_kind_check check (kind in ('normal','warmup','drop','failed'));
+alter table public.sets add column if not exists equip text;
+alter table public.sets drop constraint if exists sets_equip_check;
+alter table public.sets add constraint sets_equip_check check (equip is null or equip in ('barbell','dumbbell'));
+-- Dumbbell bench press, Incline DB press and Dumbbell curl are now the dumbbell style of Bench press,
+-- Incline bench press and Biceps curl, so their history moves across. Safe to run again: nothing matches the second time.
+update public.sets set ex = 'bench', equip = 'dumbbell' where ex = 'dbbench';
+update public.sets set ex = 'incline', equip = 'dumbbell' where ex = 'inclinedb';
+update public.sets set ex = 'curl', equip = 'dumbbell' where ex = 'dbcurl';
+
 -- ---------- Helpers ----------
 create or replace function public.is_member() returns boolean
 language sql stable security definer set search_path = public as $$
@@ -322,7 +334,7 @@ end;
 $$;
 
 -- Lets the app check which version of this file the database has.
-create or replace function public.vigor_schema_version() returns int language sql immutable as $$ select 4 $$;
+create or replace function public.vigor_schema_version() returns int language sql immutable as $$ select 5 $$;
 
 -- ---------- Row level security ----------
 alter table public.profiles enable row level security;

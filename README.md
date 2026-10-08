@@ -34,10 +34,17 @@ When a release changes `supabase/schema.sql`, re-run the whole file in SQL Edito
 | 2 (app 0.1.2) | Likes, warm-up and drop sets, member-created exercises |
 | 3 (app 0.1.3) | Profile photos, comment replies, thumbs up and down on comments |
 | 4 (app 0.1.4) | Cardio in Log (`activities` table), cardio PRs, the Cardio post category, Health import dedupe |
+| 5 (app 0.1.5) | Failed sets (F), barbell or dumbbell style per set (`sets.equip`); Dumbbell bench press, Incline DB press and Dumbbell curl merge into the dumbbell style of Bench press, Incline bench press and Biceps curl |
 
 ## Member-created exercises
 
 Anyone can add an exercise from the Add exercise sheet. The database screens each name (`add_exercise` in schema.sql): links, ads and offensive words are refused; names that describe a movement or equipment (press, curl, cable, dumbbell and so on) join the shared list for everyone at once; anything else is usable by its creator and waits in Admin > New exercises to review. Admins can also remove any member-added exercise from the list; posts that used it keep its name.
+
+## Set types and barbell or dumbbell
+
+Tapping a set number in Log marks it as a warm-up (W), drop set (D) or failed rep (F). Warm-ups never count toward PRs, history or volume. A failed set records the reps finished before the missed one and counts like a working set; posts and the Previous column show its F.
+
+Exercises listed in `EQUIP` in app.js (bench, incline, OHP, rows, curls, lunges and so on) show a Barbell / Dumbbell switch. Each style keeps its own history and PRs, so weights fill in from the last session in that style and the wall shows "Barbell bench press" and "Dumbbell bench press" as separate plates. A new block starts in the style used last time; typing "db" or "barbell" in the search picks one. Dumbbell weights are per hand ("lb each"). Rows saved before schema v5 have no `equip` and count as the exercise's first style.
 
 ## Cardio
 
