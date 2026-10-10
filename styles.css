@@ -444,3 +444,10 @@ img.av { object-fit: cover; background: var(--raise); }
 .eqseg { display: inline-flex; align-self: flex-start; gap: 2px; padding: 2px; border-radius: 9px; background: var(--raise); }
 .eqseg button { font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 7px; color: var(--muted); }
 .eqseg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+/* ---------- v0.1.6: Big 3 PR wall and Showcase ---------- */
+.plate.c-none { --c: var(--raise); --ci: var(--muted); box-shadow: inset 0 0 0 2px var(--line); }
+.wall > .btn { margin-top: 2px; }
+.showcase-head { display: flex; align-items: center; gap: 12px; padding: 16px 16px 4px; }
+.showcase-head > div > b { display: block; font-size: 16px; }
+.showcase-head > div > span { font-size: 13px; color: var(--muted); }

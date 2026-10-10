@@ -1,5 +1,5 @@
 // Network first so testers always get the newest version when online; cached copy when offline.
-const CACHE = 'vigor-shell-v6';
+const CACHE = 'vigor-shell-v7';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'config.js', 'vendor/supabase-2.117.2.js', 'manifest.webmanifest', 'icons/icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

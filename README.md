@@ -40,6 +40,14 @@ When a release changes `supabase/schema.sql`, re-run the whole file in SQL Edito
 
 Anyone can add an exercise from the Add exercise sheet. The database screens each name (`add_exercise` in schema.sql): links, ads and offensive words are refused; names that describe a movement or equipment (press, curl, cable, dumbbell and so on) join the shared list for everyone at once; anything else is usable by its creator and waits in Admin > New exercises to review. Admins can also remove any member-added exercise from the list; posts that used it keep its name.
 
+## PR wall and Showcase
+
+The PR wall on a profile shows the big three: Back squat, barbell Bench press and Deadlift (conventional or sumo, whichever is heavier), each the heaviest set marked as a PR, or an empty plate until there is one. The Showcase button under it opens every PR the person has, lifts grouped by muscle group and then cardio. Every plate links to the post that proves it.
+
+## Previous sets
+
+When an exercise is added to a workout, its sets copy the last session of that exercise in the same style, set by set: the same number of sets, the same weights and reps, and warm-ups and drop sets keep their W and D. The Previous column shows what each set was last time (with its W, D or F). + Add set takes the next set from last session when there is one, otherwise it copies the set above.
+
 ## Set types and barbell or dumbbell
 
 Tapping a set number in Log marks it as a warm-up (W), drop set (D) or failed rep (F). Warm-ups never count toward PRs, history or volume. A failed set records the reps finished before the missed one and counts like a working set; posts and the Previous column show its F.
@@ -48,7 +56,7 @@ Exercises listed in `EQUIP` in app.js (bench, incline, OHP, rows, curls, lunges 
 
 ## Cardio
 
-Log > "Log a run, walk, hike, ride or swim" (or "+ Add cardio" inside a workout) adds a cardio block: distance, time, elevation gain, average heart rate and how it felt. Activities are stored in meters and seconds in `activities` and shown in miles and feet (yards for swims, meters for rows). PRs work like lifts, so the first effort of a kind sets the baseline: fastest mile, 5K, 10K and half marathon (a longer run counts at its average pace), longest run, longest hike and biggest elevation day. They appear on the PR wall next to the lift plates.
+Log > "Log a run, walk, hike, ride or swim" (or "+ Add cardio" inside a workout) adds a cardio block: distance, time, elevation gain, average heart rate and how it felt. Activities are stored in meters and seconds in `activities` and shown in miles and feet (yards for swims, meters for rows). PRs work like lifts, so the first effort of a kind sets the baseline: fastest mile, 5K, 10K and half marathon (a longer run counts at its average pace), longest run, longest hike and biggest elevation day. They appear in Showcase next to the lift plates.
 
 ## Phone app and Health import
 

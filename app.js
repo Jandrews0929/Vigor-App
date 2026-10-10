@@ -1,7 +1,7 @@
 /* Vigor trial app. Plain JavaScript, no build step. Data lives in Supabase (see supabase/schema.sql). */
 'use strict';
 
-const VERSION = '0.1.5';
+const VERSION = '0.1.6';
 const CFG = window.VIGOR_CONFIG || {};
 
 /* ---------- Exercise library ----------
@@ -340,6 +340,7 @@ async function loadExplore() {
   S.data.creators = people.filter(p => !iFollow(p.id)).map(p => p.id)
     .sort((a, b) => followersOf(b).length - followersOf(a).length).slice(0, 12);
 }
+const BIG3 = [{ name: 'Squat', ex: ['squat'] }, { name: 'Bench', ex: ['bench'] }, { name: 'Deadlift', ex: ['dead', 'sumo'] }];
 async function loadProfile(uid) {
   await Promise.all([loadFollows(), ensureProfiles([uid])]);
   const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
@@ -360,7 +361,9 @@ async function loadProfile(uid) {
   const prWorkouts = [...Object.values(best), ...cardioWall].map(s => s.workout_id);
   const proof = prWorkouts.length ? await q(sb.from('posts').select('id,workout_id').in('workout_id', prWorkouts).eq('status', 'visible')) : [];
   const withPost = x => ({ ...x, post: (proof.find(p => p.workout_id === x.workout_id) || {}).id });
-  const wall = Object.values(best).map(withPost).sort((a, b) => +b.weight - +a.weight).slice(0, 9).concat(cardioWall.map(withPost));
+  const lifts = Object.values(best).map(withPost).sort((a, b) => +b.weight - +a.weight);
+  // The PR wall holds the big three (heaviest PR of each); Showcase has every PR.
+  const wall = BIG3.map(b => lifts.find(x => b.ex.includes(x.ex) && (!EQUIP[x.ex] || eqNorm(x.ex, x.equip) === 'barbell')) || { empty: true, name: b.name });
   // week streak: consecutive weeks (Mon start) with at least one workout, counting back from this week
   const weekKey = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x.getTime(); };
   const weeks = new Set(workouts.map(w => weekKey(w.started_at)));
@@ -369,7 +372,7 @@ async function loadProfile(uid) {
   while (weeks.has(k)) { streak++; k -= 7 * 86400000; }
   const month = workouts.filter(w => new Date(w.started_at) >= monthStart).length;
   const volume = monthSets.reduce((a, s) => a + s.weight * s.reps, 0);
-  S.data['profile:' + uid] = { posts: posts.filter(p => p.status === 'visible' || uid === S.me.id), wall, streak, month, volume };
+  S.data['profile:' + uid] = { posts: posts.filter(p => p.status === 'visible' || uid === S.me.id), wall, prs: lifts, cardio: cardioWall.map(withPost), streak, month, volume };
 }
 async function loadPost(id) {
   const rows = await q(visibleSelect().eq('id', id));
@@ -404,32 +407,43 @@ async function loadCardioHist() {
 }
 async function loadHist(ex) {
   if (S.hist[ex]) return;
-  S.hist[ex] = await q(noWarm(sb.from('sets').select('weight,reps,created_at' + (S.legacy ? '' : ',kind') + eqCol()).eq('user_id', S.me.id).eq('ex', ex)).order('created_at'));
+  // Warm-ups are kept here so last session's sets line up one for one; histOf leaves them out of PRs and bests.
+  S.hist[ex] = await q(sb.from('sets').select('weight,reps,created_at,workout_id,idx' + (S.legacy ? '' : ',kind') + eqCol()).eq('user_id', S.me.id).eq('ex', ex).order('created_at').order('idx'));
 }
 // Your logged sets of one exercise in one style: barbell bench history never sets the weights for dumbbell bench.
-function histOf(ex, eq) {
+function styleRows(ex, eq) {
   const h = S.hist[ex] || []; const want = eqNorm(ex, eq);
   return want ? h.filter(r => eqNorm(ex, r.equip) === want) : h;
 }
+// The same without warm-ups, for PRs and your best.
+const histOf = (ex, eq) => styleRows(ex, eq).filter(r => r.kind !== 'warmup');
+// Every set of the last session in this style, in the order you did them, warm-ups included.
+function lastSession(ex, eq) {
+  const h = styleRows(ex, eq); if (!h.length) return [];
+  const wid = h[h.length - 1].workout_id;
+  return h.filter(r => r.workout_id === wid).sort((a, b) => a.idx - b.idx);
+}
+const fromPrev = p => ({ w: String(+p.weight), r: String(p.reps) });
 // The style you used last time, so a new workout starts there.
 function lastEq(ex) {
   if (!EQUIP[ex]) return undefined;
   const h = S.hist[ex] || [];
   return eqNorm(ex, h.length ? h[h.length - 1].equip : null);
 }
-// A workout entry for an exercise, with sets filled from the last session in that style.
+// A workout entry for an exercise: the same sets as last session in that style, set by set (warm-ups and drop sets keep their type).
 function newEntry(id, eq) {
   const e = { id, sets: [] };
   if (EQUIP[id] && v5()) e.eq = eqNorm(id, eq || lastEq(id));
-  fillSets(e, 3);
+  const prev = lastSession(id, e.eq);
+  e.sets = prev.length ? prev.map(p => ({ ...fromPrev(p), done: false, ...(p.kind === 'warmup' || p.kind === 'drop' ? { kind: p.kind } : {}) }))
+    : Array.from({ length: 3 }, () => ({ w: '', r: '', done: false }));
   return e;
 }
-// Fills the sets you haven't checked off from your last full working set in this style (not a drop set or a missed rep).
-function fillSets(e, n) {
-  const h = histOf(e.id, e.eq); const l = h.slice().reverse().find(x => !x.kind || x.kind === 'normal') || h[h.length - 1];
-  const w = l ? String(+l.weight) : '', r = l ? String(l.reps) : '';
-  if (!e.sets.length) e.sets = Array.from({ length: n }, () => ({ w, r, done: false }));
-  else e.sets.forEach(x => { if (!x.done) { x.w = w; x.r = r; } });
+// After switching style, refills the sets you haven't checked off from the same set last session in that style
+// (extra sets copy the one above, like + Add set).
+function fillSets(e) {
+  const prev = lastSession(e.id, e.eq);
+  e.sets.forEach((x, j) => { if (x.done) return; const above = e.sets[j - 1]; Object.assign(x, prev[j] ? fromPrev(prev[j]) : above ? { w: above.w, r: above.r } : { w: '', r: '' }); });
 }
 let searchSeq = 0;
 async function searchPeople(raw) {
@@ -771,7 +785,7 @@ function profileScreen(u) {
   let goal = '';
   if (U.goal_label && U.goal_ex && U.goal_target) {
     const [gx, geq] = MERGED[U.goal_ex] || [U.goal_ex];
-    const best = d.wall.find(s => !s.cardio && s.ex === gx && eqNorm(gx, s.equip) === eqNorm(gx, geq));
+    const best = d.prs.find(s => s.ex === gx && eqNorm(gx, s.equip) === eqNorm(gx, geq));
     const cur = best ? +best.weight : 0; const pct = Math.max(0, Math.min(100, cur / U.goal_target * 100));
     goal = `<div class="goal"><div class="row"><b>${esc(U.goal_label)}</b><span>${cur ? wt(U.goal_ex, cur) : 0} of ${wt(U.goal_ex, U.goal_target)} lb</span></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
   }
@@ -786,17 +800,39 @@ function profileScreen(u) {
       ${mine ? '<button class="btn block" data-act="editProfile">Edit profile</button>' : followBtn(u)}
       <div class="stats"><div><b>${d.streak}</b><span>week streak</span></div><div><b>${d.month}</b><span>workouts this month</span></div><div><b>${d.volume >= 10000 ? Math.round(d.volume / 1000) + 'k' : num(d.volume)}</b><span>lb this month</span></div></div>
     </section>
-    <section class="wall"><div class="wall-head"><h3>PR wall</h3><span>${d.wall.length ? 'Tap a plate for its proof' : ''}</span></div>
-      ${d.wall.length ? `<div class="plates">${d.wall.map(x => `<button class="plate-tile" data-act="${x.post ? 'open' : 'noproof'}" data-id="${esc(x.post || (x.cardio ? x.type : x.ex + '|' + (x.equip || '')))}">
-          ${x.cardio ? `<span class="plate c-${CARDIO[x.kind].color}"><span class="plate-val ${x.val.length > 5 ? 'long' : ''}">${esc(x.val)}</span><span class="plate-unit">${esc(x.unit)}</span></span>
-          <span class="plate-name">${esc(x.type)}</span>` : `<span class="plate c-${exColor(x.ex)}"><span class="plate-val">${wt(x.ex, x.weight)}</span><span class="plate-unit">lb × ${x.reps}</span></span>
-          <span class="plate-name">${esc(exLabel(x.ex, x.equip))}</span>`}
-          ${x.post ? `<span class="plate-meta">▶ Proof · ${shortDate(x.created_at)}</span>` : `<span class="plate-meta none">No proof yet · ${shortDate(x.created_at)}</span>`}
-        </button>`).join('')}</div>` : `<div class="empty" style="padding:8px">${mine ? 'Log a lift or a run twice and beat it to earn your first PR plate.' : 'No PRs yet.'}</div>`}
+    <section class="wall"><div class="wall-head"><h3>PR wall</h3><span>${d.wall.some(x => !x.empty) ? 'Tap a plate for its proof' : mine ? 'Beat a squat, bench or deadlift you\'ve logged to fill these' : ''}</span></div>
+      <div class="plates">${d.wall.map(plateHtml).join('')}</div>
+      <button class="btn block" data-act="showcase" data-id="${u}">Showcase</button>
     </section>
     <div class="chips">${filters.map(f => `<button class="chip" data-act="gridf" data-id="${f}" aria-pressed="${S.gridFilter === f}">${f}</button>`).join('')}</div>
     ${shown.length ? `<div class="grid">${shown.map(p => `<button data-act="open" data-id="${p.id}" aria-label="Open ${esc(p.category)} post">${mediaHtml(p)}</button>`).join('')}</div>` : '<div class="empty">Nothing here yet.</div>'}
     ${mine && S.me.is_admin ? '<button class="admin-link" data-act="admin">Admin: invites, moderation and feedback</button>' : ''}
+    <div style="height:24px"></div>`;
+}
+// One plate: a lift or cardio PR (tap for its proof post), or an empty Big 3 slot.
+function plateHtml(x) {
+  if (x.empty) return `<div class="plate-tile"><span class="plate c-none"><span class="plate-val">–</span></span><span class="plate-name">${esc(x.name)}</span><span class="plate-meta none">No PR yet</span></div>`;
+  return `<button class="plate-tile" data-act="${x.post ? 'open' : 'noproof'}" data-id="${esc(x.post || (x.cardio ? x.type : x.ex + '|' + (x.equip || '')))}">
+    ${x.cardio ? `<span class="plate c-${CARDIO[x.kind].color}"><span class="plate-val ${x.val.length > 5 ? 'long' : ''}">${esc(x.val)}</span><span class="plate-unit">${esc(x.unit)}</span></span>
+    <span class="plate-name">${esc(x.type)}</span>` : `<span class="plate c-${exColor(x.ex)}"><span class="plate-val">${wt(x.ex, x.weight)}</span><span class="plate-unit">lb × ${x.reps}</span></span>
+    <span class="plate-name">${esc(exLabel(x.ex, x.equip))}</span>`}
+    ${x.post ? `<span class="plate-meta">▶ Proof · ${shortDate(x.created_at)}</span>` : `<span class="plate-meta none">No proof yet · ${shortDate(x.created_at)}</span>`}
+  </button>`;
+}
+// Every PR someone has: lifts grouped by muscle group, heaviest first, then cardio.
+function showcaseScreen(u) {
+  const U = S.profiles[u]; const d = S.data['profile:' + u];
+  const head = topBar(h2('Showcase'), '', true);
+  if (!U || !d) return head + loading();
+  const groups = [];
+  d.prs.forEach(x => { const g = (EX[x.ex] && EX[x.ex].grp) || 'Other'; let G = groups.find(y => y.g === g); if (!G) groups.push(G = { g, items: [] }); G.items.push(x); });
+  const order = Object.keys(GROUP_COLOR);
+  groups.sort((a, b) => (order.indexOf(a.g) + 1 || 99) - (order.indexOf(b.g) + 1 || 99));
+  if (d.cardio.length) { const C = groups.find(y => y.g === 'Cardio'); if (C) C.items.push(...d.cardio); else groups.push({ g: 'Cardio', items: d.cardio }); }
+  const n = d.prs.length + d.cardio.length;
+  return head + `<div class="showcase-head">${avatar(u)}<div><b>${esc(U.name)}</b><span>${n ? `${n} PR${n > 1 ? 's' : ''} · tap a plate for its proof` : 'No PRs yet'}</span></div></div>
+    ${groups.map(G => `<section class="wall"><div class="wall-head"><h3>${esc(G.g)}</h3><span>${G.items.length}</span></div><div class="plates">${G.items.map(plateHtml).join('')}</div></section>`).join('')}
+    ${n ? '' : `<div class="empty">${u === S.me.id ? 'Log a lift or a run, then beat it next time, to earn your first PR.' : 'Nothing to show yet.'}</div>`}
     <div style="height:24px"></div>`;
 }
 function peopleScreen(u, which) {
@@ -876,13 +912,13 @@ function logScreen() {
   return `<header class="top"><input class="title-input" id="wtitle" value="${esc(w.title)}" aria-label="Workout name" maxlength="60"><span class="timer" id="elapsed">${elapsed()}</span><button class="btn primary sm" data-act="finish">Finish</button></header>
     ${!w.ex.length && !(w.cardio || []).length ? `<div class="empty">Add your first exercise${v4() ? ' or cardio' : ''} to start logging.</div>` : ''}
     ${w.ex.map((e, i) => {
-      const h = histOf(e.id, e.eq); const last = h[h.length - 1];
+      const h = histOf(e.id, e.eq); const prev = lastSession(e.id, e.eq);
       const best = h.length ? h.reduce((a, s) => (+s.weight > +a.weight ? s : a), h[0]) : null;
       return `<section class="exblock"><div class="exblock-head"><h3>${esc(exName(e.id))}</h3>${best ? `<span class="best">Best ${wt(e.id, best.weight)} × ${best.reps}</span>` : '<span class="best">First time: sets your baseline</span>'}
         <button class="text-btn" data-act="rmEx" data-ex="${i}" style="color:var(--muted)">Remove</button></div>
         ${e.eq ? `<div class="eqseg" role="group" aria-label="Equipment">${EQUIP[e.id].map(k => `<button data-act="eqPick" data-ex="${i}" data-id="${k}" aria-pressed="${e.eq === k}">${EQ_NAME[k]}</button>`).join('')}</div>` : ''}
         <table class="sets"><thead><tr><th>Set</th><th>Previous</th><th>${exAdded(e.id) ? '+lb' : e.eq === 'dumbbell' ? 'lb each' : 'lb'}</th><th>Reps</th><th><span class="sr">Done</span></th></tr></thead><tbody>
-        ${e.sets.map((s, j) => `<tr class="${s.done ? 'done' : ''}"><td><button class="setno ${s.kind || ''}" data-act="setKind" data-ex="${i}" data-set="${j}" aria-label="Set ${j + 1}, ${KIND_NAME[s.kind || 'normal']}. Change set type">${setLabel(e.sets, j)}</button></td><td class="prev">${last ? wt(e.id, last.weight) + ' × ' + last.reps + (last.kind === 'failed' ? ' F' : '') : '–'}</td>
+        ${e.sets.map((s, j) => `<tr class="${s.done ? 'done' : ''}"><td><button class="setno ${s.kind || ''}" data-act="setKind" data-ex="${i}" data-set="${j}" aria-label="Set ${j + 1}, ${KIND_NAME[s.kind || 'normal']}. Change set type">${setLabel(e.sets, j)}</button></td><td class="prev">${prev[j] ? wt(e.id, prev[j].weight) + ' × ' + prev[j].reps + (KIND_TAG[prev[j].kind] ? ' ' + KIND_TAG[prev[j].kind] : '') : '–'}</td>
           <td><input id="w-${i}-${j}" data-ex="${i}" data-set="${j}" data-f="w" inputmode="decimal" value="${esc(s.w)}" aria-label="Weight, set ${j + 1}"></td>
           <td><input id="r-${i}-${j}" data-ex="${i}" data-set="${j}" data-f="r" inputmode="numeric" value="${esc(s.r)}" aria-label="Reps, set ${j + 1}"></td>
           <td><button class="check" data-act="toggleSet" data-ex="${i}" data-set="${j}" aria-label="Mark set ${j + 1} done">${ICON.check}</button></td></tr>
@@ -1087,6 +1123,7 @@ function currentScreen() {
     if (t.type === 'post') return postScreen(t.id);
     if (t.type === 'profile') return profileScreen(t.id);
     if (t.type === 'people') return peopleScreen(t.id, t.which);
+    if (t.type === 'showcase') return showcaseScreen(t.id);
     if (t.type === 'editProfile') return editProfileScreen();
     if (t.type === 'admin') return adminScreen();
   }
@@ -1281,6 +1318,7 @@ const A = {
   back() { S.stack.pop(); render(); const t = S.stack[S.stack.length - 1]; if (!t && S.tab === 'me') loadProfile(S.me.id).then(() => render(true)).catch(fail); },
   open(id) { push({ type: 'post', id }, () => loadPost(id)); },
   profile(id) { if (id === S.me.id) { go('me'); return; } S.gridFilter = 'All'; push({ type: 'profile', id }, () => loadProfile(id)); },
+  showcase(id) { push({ type: 'showcase', id }, () => loadProfile(id)); },
   people(id, el) {
     const [u, which] = id.split(':'); const t = S.stack[S.stack.length - 1];
     const load = async () => { await loadFollows(); await ensureProfiles([...followersOf(u), ...followsOf(u)]); };
@@ -1514,7 +1552,12 @@ const A = {
     saveWorkout(); render(true);
   },
   rmEx(_, el) { S.workout.ex.splice(+el.dataset.ex, 1); saveWorkout(); render(true); },
-  addSet(_, el) { const e = S.workout.ex[el.dataset.ex]; const l = e.sets[e.sets.length - 1] || { w: '', r: '' }; e.sets.push({ w: l.w, r: l.r, done: false }); saveWorkout(); render(true); },
+  addSet(_, el) {
+    // The next set from last session if there was one, otherwise a copy of the set above.
+    const e = S.workout.ex[el.dataset.ex]; const p = lastSession(e.id, e.eq)[e.sets.length];
+    const l = p ? fromPrev(p) : e.sets[e.sets.length - 1] || { w: '', r: '' };
+    e.sets.push({ w: l.w, r: l.r, done: false }); saveWorkout(); render(true);
+  },
   toggleSet(_, el) {
     const s = S.workout.ex[el.dataset.ex].sets[el.dataset.set];
     if (!s.done && !(+s.r > 0)) { toast('Enter reps first'); return; }
@@ -1612,7 +1655,7 @@ const A = {
       }
       const n = s.prs;
       S.workout = null; S.summary = null; S.rest = null; S.hist = {}; S.ahist = null; S.busy = false; saveWorkout();
-      toast(held ? 'Saved. The post is held for review because it looks off-topic.' : s.vis === 'public' ? (n ? `Shared. ${n} PR${n > 1 ? 's' : ''} added to your wall.` : 'Shared') : (n ? `Saved. ${n} PR${n > 1 ? 's' : ''} added to your wall.` : 'Saved to your log'));
+      toast(held ? 'Saved. The post is held for review because it looks off-topic.' : s.vis === 'public' ? (n ? `Shared. ${n} PR${n > 1 ? 's' : ''} added to your Showcase.` : 'Shared') : (n ? `Saved. ${n} PR${n > 1 ? 's' : ''} added to your Showcase.` : 'Saved to your log'));
       go(n ? 'me' : 'feed');
     } catch (e) {
       // Don't leave half a session behind: removing the workout removes its sets and activities too.
